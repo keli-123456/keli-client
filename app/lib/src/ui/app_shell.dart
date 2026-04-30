@@ -6519,20 +6519,10 @@ Color subscriptionBadgeColor(AppProfile? profile) {
 String profileMetaText(AppProfile profile) {
   final parts = <String>[
     '套餐: ${profile.planName.trim().isEmpty ? '未订阅' : profile.planName}',
-    if (profile.uuid != null && profile.uuid!.trim().isNotEmpty)
-      'UUID: ${shortTokenText(profile.uuid!)}',
     '设备限制: ${deviceLimitText(profile.deviceLimit)}',
     '速率: ${speedLimitText(profile.speedLimit)}',
   ];
   return parts.join('    ');
-}
-
-String shortTokenText(String value) {
-  final normalized = value.trim();
-  if (normalized.length <= 14) {
-    return normalized;
-  }
-  return '${normalized.substring(0, 8)}...${normalized.substring(normalized.length - 4)}';
 }
 
 String deviceLimitText(int? value) {
