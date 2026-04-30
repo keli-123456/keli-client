@@ -56,8 +56,23 @@ class AppShell extends StatelessWidget {
         }
 
         return Scaffold(
-          body: SafeArea(child: body),
+          backgroundColor: keliSurface,
+          body: SafeArea(
+            bottom: false,
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFFFBFCFE), keliSurface],
+                ),
+              ),
+              child: body,
+            ),
+          ),
           bottomNavigationBar: NavigationBar(
+            height: 66,
+            labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
             selectedIndex: controller.selectedPage,
             onDestinationSelected: controller.selectPage,
             destinations: const [
@@ -278,11 +293,13 @@ class _PageBodyState extends State<_PageBody> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final horizontalPadding = widget.isDesktop ? 20.0 : 14.0;
-        final topPadding = widget.isDesktop ? 12.0 : 12.0;
-        final bottomPadding = widget.isDesktop ? 8.0 : 20.0;
+        final horizontalPadding = widget.isDesktop ? 20.0 : 12.0;
+        final topPadding = widget.isDesktop ? 12.0 : 10.0;
+        final bottomPadding = widget.isDesktop ? 8.0 : 12.0;
         final availableWidth = constraints.maxWidth - horizontalPadding * 2;
-        final contentWidth = availableWidth > 1040 ? 1040.0 : availableWidth;
+        final maxContentWidth = widget.isDesktop ? 1040.0 : 720.0;
+        final contentWidth =
+            availableWidth > maxContentWidth ? maxContentWidth : availableWidth;
         final fillViewport = widget.isDesktop && widget.page == 0;
         final contentHeight =
             (constraints.maxHeight - topPadding - bottomPadding)
@@ -482,7 +499,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.14',
+            Text('v0.1.15',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -508,7 +525,7 @@ class HomeScreen extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _MobileHeader(profile: profile),
+          const _MobileHeader(),
           const SizedBox(height: 12),
           _AccountPanel(profile: profile, compact: true),
           const SizedBox(height: 12),
@@ -700,19 +717,21 @@ class _DesktopAccountBar extends StatelessWidget {
 }
 
 class _MobileHeader extends StatelessWidget {
-  const _MobileHeader({required this.profile});
-
-  final AppProfile? profile;
+  const _MobileHeader();
 
   @override
   Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
     return Row(
       children: [
         const Expanded(
             child: Text('Keli Client',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
         IconButton(
-            onPressed: () {}, icon: const Icon(Icons.notifications_none)),
+          tooltip: '刷新',
+          onPressed: controller.isBootstrapping ? null : controller.bootstrap,
+          icon: const Icon(Icons.refresh_rounded),
+        ),
       ],
     );
   }
@@ -753,6 +772,11 @@ class _ConnectPanel extends StatelessWidget {
 
     final duration = controller.stats.duration;
     final durationText = durationClockText(duration);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final tightPhone = compact && screenWidth < 430;
+    final dialOuter = compact ? (tightPhone ? 154.0 : 168.0) : 184.0;
+    final dialMiddle = compact ? dialOuter - 18 : 166.0;
+    final dialInner = compact ? dialOuter - 56 : 128.0;
 
     return KeliCard(
       padding: EdgeInsets.all(compact ? 16 : 20),
@@ -761,7 +785,21 @@ class _ConnectPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            if (!compact)
+            if (compact)
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('连接状态',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w900)),
+                  ),
+                  _MiniBadge(
+                    text: node?.protocol ?? '未选择',
+                    color: connected ? keliGreen : keliMuted,
+                  ),
+                ],
+              )
+            else
               Row(
                 children: [
                   const Expanded(
@@ -775,6 +813,7 @@ class _ConnectPanel extends StatelessWidget {
                   ),
                 ],
               ),
+            if (compact) const SizedBox(height: 12),
             if (!compact) const Spacer(),
             InkWell(
               borderRadius: BorderRadius.circular(999),
@@ -784,14 +823,14 @@ class _ConnectPanel extends StatelessWidget {
                       ? controller.disconnect
                       : controller.connect,
               child: SizedBox(
-                width: compact ? 186 : 184,
-                height: compact ? 186 : 184,
+                width: dialOuter,
+                height: dialOuter,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
                     Container(
-                      width: compact ? 186 : 184,
-                      height: compact ? 186 : 184,
+                      width: dialOuter,
+                      height: dialOuter,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         gradient: SweepGradient(
@@ -810,16 +849,16 @@ class _ConnectPanel extends StatelessWidget {
                       ),
                     ),
                     Container(
-                      width: compact ? 168 : 166,
-                      height: compact ? 168 : 166,
+                      width: dialMiddle,
+                      height: dialMiddle,
                       decoration: const BoxDecoration(
                         color: Color(0xFFF8FAFD),
                         shape: BoxShape.circle,
                       ),
                     ),
                     Container(
-                      width: compact ? 132 : 128,
-                      height: compact ? 132 : 128,
+                      width: dialInner,
+                      height: dialInner,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
@@ -907,33 +946,69 @@ class _SelectedNodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
-        border: Border.all(color: keliLineSoft),
+    return Material(
+      color: const Color(0xFFF8FAFD),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
         borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          _NodeFlagIcon(node: node, selected: true, size: 34),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(node.name,
-                    style: const TextStyle(fontWeight: FontWeight.w900)),
-                const SizedBox(height: 3),
-                Text(node.protocol,
-                    style: const TextStyle(color: keliMuted, fontSize: 12)),
-              ],
-            ),
+        onTap: () => showNodePickerDialog(context),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border.all(color: keliLineSoft),
+            borderRadius: BorderRadius.circular(10),
           ),
-          const _MiniBadge(text: '已选择', color: keliGreen),
-          const SizedBox(width: 8),
-          const Icon(Icons.chevron_right, color: keliMuted, size: 18),
-        ],
+          child: Row(
+            children: [
+              _NodeFlagIcon(node: node, selected: true, size: 34),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(node.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(node.protocol,
+                        style: const TextStyle(color: keliMuted, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const _MiniBadge(text: '更换', color: keliGreen),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right, color: keliMuted, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NodePickerActionButton extends StatelessWidget {
+  const _NodePickerActionButton({required this.compact});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    return SizedBox(
+      width: compact ? double.infinity : null,
+      child: OutlinedButton.icon(
+        onPressed: controller.isTestingLatency || controller.nodes.isEmpty
+            ? null
+            : controller.testAllLatency,
+        icon: controller.isTestingLatency
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.speed_outlined, size: 17),
+        label: Text(controller.isTestingLatency ? '测速中' : '批量测速'),
       ),
     );
   }
@@ -1496,6 +1571,8 @@ class _NodePickerDialogState extends State<_NodePickerDialog> {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
+    final screenSize = MediaQuery.sizeOf(context);
+    final compact = screenSize.width < 520;
     final normalizedQuery = query.trim().toLowerCase();
     final nodes = controller.nodes.where((node) {
       if (normalizedQuery.isEmpty) {
@@ -1507,45 +1584,61 @@ class _NodePickerDialogState extends State<_NodePickerDialog> {
     }).toList();
 
     return Dialog(
-      insetPadding: const EdgeInsets.all(24),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 24,
+        vertical: compact ? 10 : 24,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
+        constraints: BoxConstraints(
+          maxWidth: compact ? screenSize.width : 560,
+          maxHeight: compact ? screenSize.height * 0.9 : 620,
+        ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+          padding: EdgeInsets.fromLTRB(
+            compact ? 14 : 18,
+            compact ? 14 : 18,
+            compact ? 14 : 18,
+            12,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('选择节点',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w900)),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed:
-                        controller.isTestingLatency || controller.nodes.isEmpty
-                            ? null
-                            : controller.testAllLatency,
-                    icon: controller.isTestingLatency
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.speed_outlined, size: 17),
-                    label: Text(controller.isTestingLatency ? '测速中' : '批量测速'),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
+              if (compact) ...[
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('选择节点',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w900)),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const _NodePickerActionButton(compact: true),
+              ] else
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('选择节点',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w900)),
+                    ),
+                    const _NodePickerActionButton(compact: false),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
               const SizedBox(height: 12),
               TextField(
                 onChanged: (value) => setState(() => query = value),
@@ -2135,18 +2228,35 @@ class _RuntimeStrip extends StatelessWidget {
     ];
 
     return KeliCard(
-      padding: const EdgeInsets.all(14),
-      child: isDesktop
-          ? Row(
+      padding: EdgeInsets.all(isDesktop ? 14 : 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (isDesktop) {
+            return Row(
+                children: items
+                    .map((item) => Expanded(child: _RuntimeMetricTile(item)))
+                    .toList());
+          }
+          if (constraints.maxWidth < 430) {
+            final width = (constraints.maxWidth - 8) / 2;
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: items
-                  .map((item) => Expanded(child: _RuntimeMetricTile(item)))
-                  .toList())
-          : Row(
-              children: items
-                  .map((item) =>
-                      Expanded(child: _CompactRuntimeMetricTile(item)))
+                  .map((item) => SizedBox(
+                        width: width,
+                        child: _CompactRuntimeMetricTile(item, dense: true),
+                      ))
                   .toList(),
-            ),
+            );
+          }
+          return Row(
+            children: items
+                .map((item) => Expanded(child: _CompactRuntimeMetricTile(item)))
+                .toList(),
+          );
+        },
+      ),
     );
   }
 }
@@ -2256,9 +2366,10 @@ class _RuntimeMetricTile extends StatelessWidget {
 }
 
 class _CompactRuntimeMetricTile extends StatelessWidget {
-  const _CompactRuntimeMetricTile(this.item);
+  const _CompactRuntimeMetricTile(this.item, {this.dense = false});
 
   final _RuntimeMetricData item;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -2267,8 +2378,8 @@ class _CompactRuntimeMetricTile extends StatelessWidget {
     final unit = parts.length > 1 ? parts.skip(1).join(' ') : '';
     final label = compactMetricLabel(item.label);
     return Container(
-      height: 78,
-      margin: const EdgeInsets.all(3),
+      height: dense ? 68 : 78,
+      margin: EdgeInsets.all(dense ? 0 : 3),
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
       decoration: BoxDecoration(
         color: const Color(0xFFFBFCFE),
@@ -2585,6 +2696,8 @@ class NodeRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(node.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w800)),
                   const SizedBox(height: 3),
                   Wrap(
@@ -2715,15 +2828,17 @@ class _StoreScreenState extends State<StoreScreen> {
         _PageHeader(
           title: '商店',
           subtitle: '套餐购买、流量包和订单',
-          trailing: isDesktop
-              ? OutlinedButton.icon(
-                  onPressed: controller.isRefreshingStore
-                      ? null
-                      : () => controller.refreshStore(),
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: Text(controller.isRefreshingStore ? '刷新中' : '刷新套餐'),
-                )
-              : null,
+          trailing: OutlinedButton.icon(
+            onPressed: controller.isRefreshingStore
+                ? null
+                : () => controller.refreshStore(),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: Text(controller.isRefreshingStore
+                ? '刷新中'
+                : isDesktop
+                    ? '刷新套餐'
+                    : '刷新'),
+          ),
         ),
         const SizedBox(height: 16),
         _StoreCatalogPanel(controller: controller),
@@ -3351,18 +3466,31 @@ class _PlanChoiceWrap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 10,
-      children: [
-        for (final plan in plans)
-          _PlanChoiceButton(
-            plan: plan,
-            selected: selectedPlan?.id == plan.id,
-            showUpgradeBadge: showUpgradeBadge(plan),
-            onTap: () => onSelectPlan(plan.id),
-          ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fullWidth = constraints.maxWidth < 520;
+        final buttons = [
+          for (final plan in plans)
+            _PlanChoiceButton(
+              plan: plan,
+              selected: selectedPlan?.id == plan.id,
+              showUpgradeBadge: showUpgradeBadge(plan),
+              fullWidth: fullWidth,
+              onTap: () => onSelectPlan(plan.id),
+            ),
+        ];
+        if (fullWidth) {
+          return Column(
+            children: [
+              for (var index = 0; index < buttons.length; index++) ...[
+                SizedBox(width: double.infinity, child: buttons[index]),
+                if (index != buttons.length - 1) const SizedBox(height: 10),
+              ],
+            ],
+          );
+        }
+        return Wrap(spacing: 8, runSpacing: 10, children: buttons);
+      },
     );
   }
 }
@@ -3372,16 +3500,28 @@ class _PlanChoiceButton extends StatelessWidget {
     required this.plan,
     required this.selected,
     required this.showUpgradeBadge,
+    required this.fullWidth,
     required this.onTap,
   });
 
   final StorePlan plan;
   final bool selected;
   final bool showUpgradeBadge;
+  final bool fullWidth;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final label = Text(
+      '${plan.name} | ${plan.trafficLabel}',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: selected ? keliInk : keliMuted,
+        fontSize: 14,
+        fontWeight: FontWeight.w900,
+      ),
+    );
     return Material(
       color: selected ? keliBlueSoft : Colors.white,
       borderRadius: BorderRadius.circular(8),
@@ -3399,16 +3539,9 @@ class _PlanChoiceButton extends StatelessWidget {
             ),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
             children: [
-              Text(
-                '${plan.name} | ${plan.trafficLabel}',
-                style: TextStyle(
-                  color: selected ? keliInk : keliMuted,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
+              if (fullWidth) Expanded(child: label) else label,
               if (showUpgradeBadge) ...[
                 const SizedBox(width: 8),
                 Container(
@@ -6931,20 +7064,37 @@ class _PageHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        final titleBlock = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 4),
+            Text(subtitle, style: const TextStyle(color: keliMuted)),
+          ],
+        );
+        if (trailing == null) {
+          return titleBlock;
+        }
+        if (compact) {
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 4),
-              Text(subtitle, style: const TextStyle(color: keliMuted)),
+              titleBlock,
+              const SizedBox(height: 12),
+              Align(alignment: Alignment.centerLeft, child: trailing!),
             ],
-          ),
-        ),
-        if (trailing != null) trailing!,
-      ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: titleBlock),
+            trailing!,
+          ],
+        );
+      },
     );
   }
 }
