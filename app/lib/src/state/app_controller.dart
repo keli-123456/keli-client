@@ -30,6 +30,7 @@ class AppController extends ChangeNotifier {
   bool isPurchasing = false;
   String? storeError;
   List<StorePlan> storePlans = const [];
+  List<StoreOrder> storeOrders = const [];
   List<PaymentMethod> paymentMethods = const [];
   String? selectedPaymentMethodId;
   bool discountUpgradeEnabled = false;
@@ -69,6 +70,15 @@ class AppController extends ChangeNotifier {
       NodeFilter.vless =>
         nodes.where((node) => node.protocol == 'VLESS').toList(),
     };
+  }
+
+  StoreOrder? get pendingOrder {
+    for (final order in storeOrders) {
+      if (order.isPending) {
+        return order;
+      }
+    }
+    return null;
   }
 
   Future<void> bootstrap() async {
@@ -154,6 +164,7 @@ class AppController extends ChangeNotifier {
     profile = null;
     diagnostics = null;
     storePlans = const [];
+    storeOrders = const [];
     paymentMethods = const [];
     selectedPaymentMethodId = null;
     discountUpgradeEnabled = false;
@@ -190,6 +201,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       storePlans = await api.fetchPlans();
+      await refreshOrders(notify: false);
       try {
         final config = await api.fetchUserConfig();
         discountUpgradeEnabled = _discountUpgradeEnabled(config);
@@ -215,6 +227,19 @@ class AppController extends ChangeNotifier {
     } finally {
       isRefreshingStore = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> refreshOrders({bool notify = true}) async {
+    try {
+      storeOrders = await api.fetchOrders();
+    } catch (error) {
+      storeOrders = const [];
+      _log('WARN', '订单列表加载失败: $error');
+    } finally {
+      if (notify) {
+        notifyListeners();
+      }
     }
   }
 
@@ -248,12 +273,28 @@ class AppController extends ChangeNotifier {
     if (isPurchasing) {
       throw const ApiException('正在处理上一个订单');
     }
+    final pending = pendingOrder;
+    if (pending != null) {
+      throw ApiException('已有待支付订单 ${pending.tradeNo}，请先支付或取消后再创建新订单');
+    }
     isPurchasing = true;
     storeError = null;
     notifyListeners();
     try {
       final tradeNo =
           await api.createOrder(planId: plan.id, period: period.period);
+      storeOrders = [
+        StoreOrder(
+          planId: plan.id,
+          planName: plan.name,
+          tradeNo: tradeNo,
+          period: period.period,
+          status: 0,
+          totalAmountCents: period.priceCents,
+          createdAt: DateTime.now(),
+        ),
+        ...storeOrders.where((order) => order.tradeNo != tradeNo),
+      ];
       _log('INFO', '订单已创建: $tradeNo');
       return tradeNo;
     } catch (error) {
@@ -270,6 +311,10 @@ class AppController extends ChangeNotifier {
     if (isPurchasing) {
       throw const ApiException('正在处理上一个订单');
     }
+    final pending = pendingOrder;
+    if (pending != null) {
+      throw ApiException('已有待支付订单 ${pending.tradeNo}，请先支付或取消后再创建新订单');
+    }
     if (quoteToken.trim().isEmpty) {
       throw const ApiException('请先完成升级预览');
     }
@@ -278,6 +323,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       final tradeNo = await api.confirmUpgrade(quoteToken: quoteToken);
+      unawaited(refreshOrders());
       _log('INFO', '升级订单已创建: $tradeNo');
       return tradeNo;
     } catch (error) {
@@ -327,6 +373,7 @@ class AppController extends ChangeNotifier {
     }
     try {
       await api.cancelOrder(tradeNo: tradeNo);
+      await refreshOrders(notify: false);
       _log('INFO', '订单已取消: $tradeNo');
     } catch (error) {
       storeError = '$error';
@@ -353,8 +400,28 @@ class AppController extends ChangeNotifier {
     storeError = null;
     notifyListeners();
     try {
+      final pending = pendingOrder;
+      if (pending != null) {
+        return PurchaseResult(
+          message: '已有待支付订单，请先支付或取消后再创建新订单',
+          tradeNo: pending.tradeNo,
+          copyText: pending.tradeNo,
+        );
+      }
       final tradeNo =
           await api.createOrder(planId: plan.id, period: period.period);
+      storeOrders = [
+        StoreOrder(
+          planId: plan.id,
+          planName: plan.name,
+          tradeNo: tradeNo,
+          period: period.period,
+          status: 0,
+          totalAmountCents: period.priceCents,
+          createdAt: DateTime.now(),
+        ),
+        ...storeOrders.where((order) => order.tradeNo != tradeNo),
+      ];
       _log('INFO', '订单已创建: $tradeNo');
       return await _checkoutTradeNo(
         tradeNo: tradeNo,
@@ -390,7 +457,16 @@ class AppController extends ChangeNotifier {
     storeError = null;
     notifyListeners();
     try {
+      final pending = pendingOrder;
+      if (pending != null) {
+        return PurchaseResult(
+          message: '已有待支付订单，请先支付或取消后再创建新订单',
+          tradeNo: pending.tradeNo,
+          copyText: pending.tradeNo,
+        );
+      }
       final tradeNo = await api.confirmUpgrade(quoteToken: quoteToken);
+      unawaited(refreshOrders());
       _log('INFO', '升级订单已创建: $tradeNo');
       return await _checkoutTradeNo(
         tradeNo: tradeNo,
@@ -432,6 +508,7 @@ class AppController extends ChangeNotifier {
         );
         if (checkout.type == -1) {
           await bootstrap();
+          await refreshOrders(notify: false);
           return PurchaseResult(message: successMessage, tradeNo: tradeNo);
         }
       }
@@ -449,6 +526,7 @@ class AppController extends ChangeNotifier {
 
     if (checkout.type == -1) {
       await bootstrap();
+      await refreshOrders(notify: false);
       return PurchaseResult(message: successMessage, tradeNo: tradeNo);
     }
 

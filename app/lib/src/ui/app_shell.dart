@@ -2941,7 +2941,7 @@ class _StorePricingCard extends StatelessWidget {
             child: FilledButton(
               onPressed: controller.isPurchasing
                   ? null
-                  : () => showCheckoutDialog(
+                  : () => handleStoreBuy(
                         context,
                         controller,
                         plan,
@@ -3023,6 +3023,172 @@ Future<void> showCheckoutDialog(
       plan: plan,
       option: option,
       isUpgrade: isUpgrade,
+    ),
+  );
+}
+
+enum _PendingOrderAction { payExisting, cancelAndContinue }
+
+Future<void> handleStoreBuy(
+  BuildContext context,
+  AppController controller,
+  StorePlan plan,
+  PlanPeriodOption option, {
+  bool isUpgrade = false,
+}) async {
+  final pending = controller.pendingOrder;
+  if (pending == null) {
+    return showCheckoutDialog(
+      context,
+      controller,
+      plan,
+      option,
+      isUpgrade: isUpgrade,
+    );
+  }
+
+  final action = await showPendingOrderGuardDialog(context, pending);
+  if (!context.mounted || action == null) {
+    return;
+  }
+  switch (action) {
+    case _PendingOrderAction.payExisting:
+      await showExistingOrderPaymentDialog(
+        context: context,
+        controller: controller,
+        order: pending,
+      );
+      break;
+    case _PendingOrderAction.cancelAndContinue:
+      try {
+        await controller.cancelStoreOrder(pending.tradeNo);
+        if (!context.mounted) {
+          return;
+        }
+        await showCheckoutDialog(
+          context,
+          controller,
+          plan,
+          option,
+          isUpgrade: isUpgrade,
+        );
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('取消订单失败: $error')));
+        }
+      }
+      break;
+  }
+}
+
+Future<_PendingOrderAction?> showPendingOrderGuardDialog(
+  BuildContext context,
+  StoreOrder order,
+) {
+  return showDialog<_PendingOrderAction>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('已有待支付订单'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('面板同一时间只允许存在一个未完成订单。请先支付或取消当前订单。'),
+          const SizedBox(height: 14),
+          _PendingOrderSummary(order: order),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+        OutlinedButton(
+          onPressed: () =>
+              Navigator.pop(context, _PendingOrderAction.cancelAndContinue),
+          child: const Text('取消并继续'),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.pop(context, _PendingOrderAction.payExisting),
+          child: const Text('去支付已有订单'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> confirmCancelStoreOrder(
+  BuildContext context,
+  AppController controller,
+  StoreOrder order,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('取消订单'),
+      content: Text('确定取消订单 ${order.tradeNo} 吗？'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('关闭'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: FilledButton.styleFrom(backgroundColor: keliRed),
+          child: const Text('确认取消'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) {
+    return;
+  }
+  try {
+    await controller.cancelStoreOrder(order.tradeNo);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('订单已取消')));
+    }
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('取消订单失败: $error')));
+    }
+  }
+}
+
+Future<void> showStoreOrderDetailDialog(
+  BuildContext context,
+  StoreOrder order,
+) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('订单详情'),
+      content: _StoreOrderDetail(order: order),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> showExistingOrderPaymentDialog({
+  required BuildContext context,
+  required AppController controller,
+  required StoreOrder order,
+}) {
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: !controller.isPurchasing,
+    builder: (_) => _ExistingOrderPaymentDialog(
+      controller: controller,
+      order: order,
     ),
   );
 }
@@ -3268,6 +3434,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       }
       if (status == 3) {
         await widget.controller.bootstrap();
+        await widget.controller.refreshOrders();
         if (!mounted) {
           return;
         }
@@ -3636,6 +3803,513 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ExistingOrderPaymentDialog extends StatefulWidget {
+  const _ExistingOrderPaymentDialog({
+    required this.controller,
+    required this.order,
+  });
+
+  final AppController controller;
+  final StoreOrder order;
+
+  @override
+  State<_ExistingOrderPaymentDialog> createState() =>
+      _ExistingOrderPaymentDialogState();
+}
+
+class _ExistingOrderPaymentDialogState
+    extends State<_ExistingOrderPaymentDialog> {
+  String? methodId;
+  bool paying = false;
+  bool checking = false;
+  bool cancelling = false;
+  bool orderClosed = false;
+  PurchaseResult? result;
+  String? resultDetail;
+  bool resultIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    methodId = widget.controller.selectedPaymentMethodId ??
+        defaultPaymentMethodId(widget.controller.paymentMethods);
+  }
+
+  Future<void> payOrder() async {
+    if (paying || orderClosed || !widget.order.isPending) {
+      return;
+    }
+    final methods = widget.controller.paymentMethods;
+    final canFreePay = widget.order.totalAmountCents <= 0;
+    if (methodId == null && !canFreePay) {
+      setState(() {
+        result = PurchaseResult(
+          message: '请选择支付方式，或复制订单号到面板支付',
+          tradeNo: widget.order.tradeNo,
+          copyText: widget.order.tradeNo,
+        );
+        resultDetail = null;
+        resultIsError = false;
+      });
+      return;
+    }
+    if (methods.isEmpty && !canFreePay) {
+      await Clipboard.setData(ClipboardData(text: widget.order.tradeNo));
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result =
+            PurchaseResult(message: '订单号已复制', tradeNo: widget.order.tradeNo);
+        resultDetail = '可以到面板订单页继续支付。';
+        resultIsError = false;
+      });
+      return;
+    }
+
+    setState(() {
+      paying = true;
+      result = null;
+      resultDetail = null;
+      resultIsError = false;
+    });
+    if (methodId != null) {
+      widget.controller.selectPaymentMethod(methodId);
+    }
+    final purchase = await widget.controller.payOrder(
+      tradeNo: widget.order.tradeNo,
+      paymentMethodId: methodId,
+      allowNoPaymentMethod: canFreePay,
+      successMessage: '支付成功，套餐已刷新',
+      externalMessage: '正在打开支付页面',
+    );
+    await handlePaymentResult(purchase);
+    if (mounted) {
+      setState(() => paying = false);
+    }
+  }
+
+  Future<void> handlePaymentResult(PurchaseResult purchase) async {
+    var detail = '';
+    if (purchase.copyText != null) {
+      await Clipboard.setData(ClipboardData(text: purchase.copyText!));
+      detail = '支付信息或订单号已复制到剪贴板';
+    }
+    if (purchase.externalUrl != null && mounted) {
+      final opened = await openExternalUrl(purchase.externalUrl!);
+      if (opened) {
+        detail = '支付页面已打开，完成后可回到客户端刷新套餐';
+      } else {
+        await Clipboard.setData(ClipboardData(text: purchase.externalUrl!));
+        detail = '支付链接打开失败，已复制到剪贴板';
+      }
+    }
+    if (purchase.qrPayload != null) {
+      detail = '请在弹出的二维码窗口完成支付，付款后可查询状态并刷新套餐';
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      result = purchase;
+      resultDetail = detail.isEmpty ? null : detail;
+      resultIsError = purchase.message.startsWith('购买失败') ||
+          purchase.message.startsWith('支付失败');
+    });
+    if (purchase.qrPayload != null) {
+      unawaited(showCheckoutQrDialog(
+        context: context,
+        controller: widget.controller,
+        payload: purchase.qrPayload!,
+        tradeNo: purchase.tradeNo ?? widget.order.tradeNo,
+        successMessage: '支付成功，套餐已刷新',
+      ));
+    }
+  }
+
+  Future<void> checkPaymentStatus() async {
+    if (checking) {
+      return;
+    }
+    setState(() => checking = true);
+    try {
+      final status =
+          await widget.controller.checkStoreOrder(widget.order.tradeNo);
+      if (!mounted) {
+        return;
+      }
+      if (status == 3) {
+        await widget.controller.bootstrap();
+        await widget.controller.refreshOrders();
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          result = PurchaseResult(
+              message: '支付成功，套餐已刷新', tradeNo: widget.order.tradeNo);
+          resultDetail = null;
+          resultIsError = false;
+          orderClosed = true;
+        });
+      } else {
+        setState(() {
+          result = PurchaseResult(
+              message: '订单尚未完成支付', tradeNo: widget.order.tradeNo);
+          resultDetail = '当前状态码：$status';
+          resultIsError = false;
+        });
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result = PurchaseResult(
+            message: '查询失败: $error', tradeNo: widget.order.tradeNo);
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => checking = false);
+      }
+    }
+  }
+
+  Future<void> cancelOrder() async {
+    if (cancelling) {
+      return;
+    }
+    setState(() => cancelling = true);
+    try {
+      await widget.controller.cancelStoreOrder(widget.order.tradeNo);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result = const PurchaseResult(message: '订单已取消');
+        resultDetail = null;
+        resultIsError = false;
+        orderClosed = true;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result = PurchaseResult(
+            message: '取消失败: $error', tradeNo: widget.order.tradeNo);
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => cancelling = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final methods = widget.controller.paymentMethods;
+    final canFreePay = widget.order.totalAmountCents <= 0;
+    final activePending = widget.order.isPending && !orderClosed;
+    final busy = paying || checking || cancelling;
+    final canPay = activePending &&
+        !busy &&
+        (methodId != null || canFreePay || methods.isEmpty);
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: Colors.white,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: keliBlueSoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.receipt_long_outlined,
+                              color: keliBlueStrong, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('处理已有订单',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900)),
+                              SizedBox(height: 2),
+                              Text('继续支付或取消这个待支付订单',
+                                  style: TextStyle(
+                                      color: keliMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: busy ? null : () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _PendingOrderSummary(order: widget.order),
+                    const SizedBox(height: 16),
+                    if (activePending) ...[
+                      const Text('支付方式',
+                          style: TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 10),
+                      if (methods.isEmpty && !canFreePay)
+                        const _CheckoutInfoBox(
+                          icon: Icons.info_outline,
+                          title: '暂无可选支付方式',
+                          message: '可以复制订单号到面板继续处理。',
+                        )
+                      else
+                        Column(
+                          children: [
+                            for (final method in methods) ...[
+                              _PaymentMethodTile(
+                                method: method,
+                                selected: method.id == methodId,
+                                onTap: busy
+                                    ? null
+                                    : () =>
+                                        setState(() => methodId = method.id),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ],
+                        ),
+                      const SizedBox(height: 14),
+                    ],
+                    if (result != null) ...[
+                      _CheckoutResultBox(
+                        result: result!,
+                        detail: resultDetail,
+                        isError: resultIsError,
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final closeButton = OutlinedButton(
+                          onPressed: busy ? null : () => Navigator.pop(context),
+                          child: const Text('关闭'),
+                        );
+                        final cancelButton = OutlinedButton.icon(
+                          onPressed:
+                              activePending && !busy ? cancelOrder : null,
+                          icon: cancelling
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.close_rounded, size: 17),
+                          label: Text(cancelling ? '取消中' : '取消订单'),
+                          style: OutlinedButton.styleFrom(
+                              foregroundColor: keliRed),
+                        );
+                        final checkButton = OutlinedButton.icon(
+                          onPressed: activePending && !busy
+                              ? checkPaymentStatus
+                              : null,
+                          icon: checking
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.fact_check_outlined, size: 17),
+                          label: Text(checking ? '查询中' : '查询状态'),
+                        );
+                        final payButton = FilledButton.icon(
+                          onPressed: canPay ? payOrder : null,
+                          icon: paying
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.payment_outlined, size: 17),
+                          label: Text(paying ? '支付中' : '立即支付'),
+                        );
+
+                        if (constraints.maxWidth < 430) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              payButton,
+                              const SizedBox(height: 8),
+                              checkButton,
+                              const SizedBox(height: 8),
+                              cancelButton,
+                              const SizedBox(height: 8),
+                              closeButton,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(child: closeButton),
+                            const SizedBox(width: 10),
+                            Expanded(child: cancelButton),
+                            const SizedBox(width: 10),
+                            Expanded(child: checkButton),
+                            const SizedBox(width: 10),
+                            Expanded(flex: 2, child: payButton),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingOrderSummary extends StatelessWidget {
+  const _PendingOrderSummary({required this.order});
+
+  final StoreOrder order;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFE),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Column(
+        children: [
+          _StoreOrderDetailLine(label: '订单号', value: order.tradeNo),
+          _StoreOrderDetailLine(label: '套餐', value: storeOrderPlanName(order)),
+          _StoreOrderDetailLine(
+              label: '周期', value: orderPeriodText(order.period)),
+          _StoreOrderDetailLine(
+              label: '状态', value: orderStatusText(order.status)),
+          _StoreOrderDetailLine(
+              label: '金额', value: priceText(order.totalAmountCents)),
+          _StoreOrderDetailLine(
+              label: '创建时间', value: storeOrderDateText(order.createdAt)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreOrderDetail extends StatelessWidget {
+  const _StoreOrderDetail({required this.order});
+
+  final StoreOrder order;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 360,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _StoreOrderDetailLine(label: '订单号', value: order.tradeNo),
+          _StoreOrderDetailLine(label: '套餐', value: storeOrderPlanName(order)),
+          if (order.isDiscountUpgrade) ...[
+            _StoreOrderDetailLine(
+                label: '原套餐', value: order.upgradeSourcePlanName ?? '-'),
+            _StoreOrderDetailLine(
+                label: '目标套餐', value: order.upgradeTargetPlanName ?? '-'),
+          ],
+          _StoreOrderDetailLine(
+              label: '周期', value: orderPeriodText(order.period)),
+          _StoreOrderDetailLine(
+              label: '状态', value: orderStatusText(order.status)),
+          _StoreOrderDetailLine(
+              label: '订单金额', value: priceText(order.totalAmountCents)),
+          if (order.discountAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '优惠金额', value: priceText(order.discountAmountCents!)),
+          if (order.balanceAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '余额抵扣', value: priceText(order.balanceAmountCents!)),
+          if (order.handlingAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '手续费', value: priceText(order.handlingAmountCents!)),
+          if (order.upgradeCreditAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '升级抵扣',
+                value: priceText(order.upgradeCreditAmountCents!)),
+          _StoreOrderDetailLine(
+              label: '创建时间', value: storeOrderDateText(order.createdAt)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreOrderDetailLine extends StatelessWidget {
+  const _StoreOrderDetailLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 76,
+            child: Text(label,
+                style: const TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: SelectableText(value,
+                style: const TextStyle(
+                    color: keliInk, fontSize: 12, fontWeight: FontWeight.w900)),
+          ),
+        ],
       ),
     );
   }
@@ -4183,6 +4857,7 @@ class _CheckoutQrDialogState extends State<_CheckoutQrDialog> {
       }
       if (status == 3) {
         await widget.controller.bootstrap();
+        await widget.controller.refreshOrders();
         if (!mounted) {
           return;
         }
@@ -4542,6 +5217,8 @@ class _StoreOrdersPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final orders = controller.storeOrders;
+    final pending = controller.pendingOrder;
     return SizedBox(
       width: double.infinity,
       child: KeliCard(
@@ -4549,16 +5226,327 @@ class _StoreOrdersPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('订单',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 14),
-            _EmptyStoreBox(
-              message:
-                  controller.isPurchasing ? '正在创建订单' : '暂无本地订单记录，购买后会自动打开支付结果',
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('订单',
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                ),
+                OutlinedButton.icon(
+                  onPressed: controller.isRefreshingStore
+                      ? null
+                      : () => controller.refreshStore(),
+                  icon: controller.isRefreshingStore
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh, size: 17),
+                  label: Text(controller.isRefreshingStore ? '刷新中' : '刷新'),
+                ),
+              ],
             ),
+            const SizedBox(height: 14),
+            if (controller.isRefreshingStore && orders.isEmpty)
+              const _StoreLoadingBox(message: '正在加载订单')
+            else if (orders.isEmpty)
+              const _EmptyStoreBox(message: '暂无订单记录')
+            else ...[
+              if (pending != null) ...[
+                _PendingOrderBanner(
+                  order: pending,
+                  onPay: () => showExistingOrderPaymentDialog(
+                    context: context,
+                    controller: controller,
+                    order: pending,
+                  ),
+                  onCancel: () =>
+                      confirmCancelStoreOrder(context, controller, pending),
+                ),
+                const SizedBox(height: 12),
+              ],
+              for (final order in orders) ...[
+                _StoreOrderCard(
+                  order: order,
+                  onView: () => showStoreOrderDetailDialog(context, order),
+                  onPay: order.isPending
+                      ? () => showExistingOrderPaymentDialog(
+                            context: context,
+                            controller: controller,
+                            order: order,
+                          )
+                      : null,
+                  onCancel: order.isPending
+                      ? () =>
+                          confirmCancelStoreOrder(context, controller, order)
+                      : null,
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _StoreLoadingBox extends StatelessWidget {
+  const _StoreLoadingBox({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+          Text(message, style: const TextStyle(color: keliMuted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingOrderBanner extends StatelessWidget {
+  const _PendingOrderBanner({
+    required this.order,
+    required this.onPay,
+    required this.onCancel,
+  });
+
+  final StoreOrder order;
+  final VoidCallback onPay;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: keliOrange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child:
+                const Icon(Icons.schedule_rounded, color: keliOrange, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('已有待支付订单',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 3),
+                Text(
+                  '${storeOrderPlanName(order)} · ${priceText(order.totalAmountCents)} · ${order.tradeNo}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: keliMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton(onPressed: onCancel, child: const Text('取消')),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: onPay, child: const Text('去支付')),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreOrderCard extends StatelessWidget {
+  const _StoreOrderCard({
+    required this.order,
+    required this.onView,
+    required this.onPay,
+    required this.onCancel,
+  });
+
+  final StoreOrder order;
+  final VoidCallback onView;
+  final VoidCallback? onPay;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 620;
+          final summary = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      storeOrderPlanName(order),
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _OrderStatusBadge(status: order.status),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 7,
+                children: [
+                  _OrderMeta(
+                      icon: Icons.event_note,
+                      text: orderPeriodText(order.period)),
+                  _OrderMeta(
+                      icon: Icons.payments_outlined,
+                      text: priceText(order.totalAmountCents)),
+                  _OrderMeta(
+                      icon: Icons.access_time_rounded,
+                      text: storeOrderDateText(order.createdAt)),
+                ],
+              ),
+              const SizedBox(height: 9),
+              SelectableText(
+                order.tradeNo,
+                style: const TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700),
+              ),
+            ],
+          );
+          final actions = Wrap(
+            alignment: compact ? WrapAlignment.start : WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onView,
+                icon: const Icon(Icons.visibility_outlined, size: 16),
+                label: const Text('查看'),
+              ),
+              if (onPay != null)
+                FilledButton.icon(
+                  onPressed: onPay,
+                  icon: const Icon(Icons.payment_outlined, size: 16),
+                  label: const Text('支付'),
+                ),
+              if (onCancel != null)
+                OutlinedButton.icon(
+                  onPressed: onCancel,
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                  label: const Text('取消'),
+                  style: OutlinedButton.styleFrom(foregroundColor: keliRed),
+                ),
+            ],
+          );
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                summary,
+                const SizedBox(height: 12),
+                actions,
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: summary),
+              const SizedBox(width: 16),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _OrderStatusBadge extends StatelessWidget {
+  const _OrderStatusBadge({required this.status});
+
+  final int status;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = orderStatusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        orderStatusText(status),
+        style:
+            TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900),
+      ),
+    );
+  }
+}
+
+class _OrderMeta extends StatelessWidget {
+  const _OrderMeta({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: keliMuted),
+        const SizedBox(width: 5),
+        Text(text,
+            style: const TextStyle(
+                color: keliMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+      ],
     );
   }
 }
@@ -5630,6 +6618,65 @@ String priceText(int cents) {
       ? value.toStringAsFixed(0)
       : value.toStringAsFixed(2);
   return '¥$text';
+}
+
+String storeOrderPlanName(StoreOrder order) {
+  if (order.upgradeTargetPlanName != null &&
+      order.upgradeTargetPlanName!.isNotEmpty) {
+    return order.upgradeTargetPlanName!;
+  }
+  if (order.planName != null && order.planName!.isNotEmpty) {
+    return order.planName!;
+  }
+  if (order.isRecharge) {
+    return '余额充值';
+  }
+  return '套餐订单';
+}
+
+String orderPeriodText(String period) {
+  return switch (period) {
+    'month_price' => '月付',
+    'quarter_price' => '季付',
+    'half_year_price' => '半年',
+    'year_price' => '年付',
+    'two_year_price' => '两年',
+    'three_year_price' => '三年',
+    'onetime_price' => '一次性',
+    'reset_price' => '重置流量',
+    'deposit' || 'recharge' => '余额充值',
+    _ => period.isEmpty ? '-' : period,
+  };
+}
+
+String orderStatusText(int status) {
+  return switch (status) {
+    0 => '待支付',
+    1 => '处理中',
+    2 => '已取消',
+    3 => '已完成',
+    4 => '已退款',
+    _ => '未知($status)',
+  };
+}
+
+Color orderStatusColor(int status) {
+  return switch (status) {
+    0 => keliOrange,
+    1 => keliBlueStrong,
+    2 => keliMuted,
+    3 => keliGreen,
+    4 => keliRed,
+    _ => keliMuted,
+  };
+}
+
+String storeOrderDateText(DateTime? value) {
+  if (value == null) {
+    return '-';
+  }
+  return '${value.year}/${value.month.toString().padLeft(2, '0')}/${value.day.toString().padLeft(2, '0')} '
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
 
 Future<bool> openExternalUrl(String url) async {

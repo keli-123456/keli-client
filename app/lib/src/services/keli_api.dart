@@ -20,6 +20,8 @@ abstract interface class KeliApi {
 
   Future<List<PaymentMethod>> fetchPaymentMethods();
 
+  Future<List<StoreOrder>> fetchOrders();
+
   Future<Map<String, Object?>> fetchUserConfig();
 
   Future<String> createOrder({
@@ -175,6 +177,13 @@ class RealKeliApi implements KeliApi {
         await _requestWithSession('GET', '/user/order/getPaymentMethod');
     final payload = _extractPayload(body);
     return _parsePaymentMethods(payload);
+  }
+
+  @override
+  Future<List<StoreOrder>> fetchOrders() async {
+    final body = await _requestWithSession('GET', '/user/order/fetch');
+    final payload = _extractPayload(body);
+    return _parseOrders(payload);
   }
 
   @override
@@ -547,6 +556,59 @@ class RealKeliApi implements KeliApi {
     );
   }
 
+  List<StoreOrder> _parseOrders(Object? value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((raw) => _parseOrder(Map<String, Object?>.from(raw)))
+          .where((order) => order.tradeNo.isNotEmpty)
+          .toList();
+    }
+    if (value is Map) {
+      if (value['data'] != null) {
+        return _parseOrders(value['data']);
+      }
+      return value.values
+          .whereType<Map>()
+          .map((raw) => _parseOrder(Map<String, Object?>.from(raw)))
+          .where((order) => order.tradeNo.isNotEmpty)
+          .toList();
+    }
+    return const [];
+  }
+
+  StoreOrder _parseOrder(Map<String, Object?> raw) {
+    final plan = raw['plan'] is Map
+        ? Map<String, Object?>.from(raw['plan'] as Map)
+        : <String, Object?>{};
+    final upgradeSnapshot = raw['upgrade_pricing_snapshot'] is Map
+        ? Map<String, Object?>.from(raw['upgrade_pricing_snapshot'] as Map)
+        : <String, Object?>{};
+    final sourcePlan = upgradeSnapshot['source_plan'] is Map
+        ? Map<String, Object?>.from(upgradeSnapshot['source_plan'] as Map)
+        : <String, Object?>{};
+    final targetPlan = upgradeSnapshot['target_plan'] is Map
+        ? Map<String, Object?>.from(upgradeSnapshot['target_plan'] as Map)
+        : <String, Object?>{};
+    return StoreOrder(
+      id: _intValue(raw['id']),
+      planId: _intValue(raw['plan_id']),
+      type: _intValue(raw['type']),
+      planName: _stringValue(plan['name']),
+      upgradeSourcePlanName: _stringValue(sourcePlan['name']),
+      upgradeTargetPlanName: _stringValue(targetPlan['name']),
+      tradeNo: _stringValue(raw['trade_no']) ?? '',
+      period: _stringValue(raw['period']) ?? '',
+      status: _intValue(raw['status']) ?? 0,
+      totalAmountCents: _intValue(raw['total_amount']) ?? 0,
+      handlingAmountCents: _intValue(raw['handling_amount']),
+      balanceAmountCents: _intValue(raw['balance_amount']),
+      discountAmountCents: _intValue(raw['discount_amount']),
+      upgradeCreditAmountCents: _intValue(raw['upgrade_credit_amount']),
+      createdAt: _dateTimeValue(raw['created_at']),
+    );
+  }
+
   UpgradePreview _parseUpgradePreview(Map<String, Object?> raw) {
     final pricing = raw['pricing_detail'] is Map
         ? Map<String, Object?>.from(raw['pricing_detail'] as Map)
@@ -760,6 +822,29 @@ class RealKeliApi implements KeliApi {
 
   int? _intValue(Object? value) => _numValue(value)?.toInt();
 
+  DateTime? _dateTimeValue(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is num) {
+      if (value <= 0) {
+        return null;
+      }
+      final milliseconds =
+          value > 10000000000 ? value.toInt() : value.toInt() * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    }
+    final raw = '$value'.trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+    final parsedNum = num.tryParse(raw);
+    if (parsedNum != null) {
+      return _dateTimeValue(parsedNum);
+    }
+    return DateTime.tryParse(raw)?.toLocal();
+  }
+
   String? _tradeNoFromPayload(Object? payload) {
     if (payload is Map) {
       for (final key in ['trade_no', 'tradeNo', 'tradeNoStr']) {
@@ -939,6 +1024,33 @@ class MockKeliApi implements KeliApi {
     return const [
       PaymentMethod(id: '1', name: '余额支付', payment: 'balance'),
       PaymentMethod(id: '2', name: '在线支付', payment: 'gateway'),
+    ];
+  }
+
+  @override
+  Future<List<StoreOrder>> fetchOrders() async {
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    return [
+      StoreOrder(
+        id: 1,
+        planId: 1,
+        planName: '标准套餐',
+        tradeNo: 'MOCK-PENDING-001',
+        period: 'month_price',
+        status: 0,
+        totalAmountCents: 1200,
+        createdAt: DateTime.now().subtract(const Duration(minutes: 18)),
+      ),
+      StoreOrder(
+        id: 2,
+        planId: 2,
+        planName: '旗舰套餐',
+        tradeNo: 'MOCK-PAID-002',
+        period: 'year_price',
+        status: 3,
+        totalAmountCents: 21800,
+        createdAt: DateTime.now().subtract(const Duration(days: 6)),
+      ),
     ];
   }
 

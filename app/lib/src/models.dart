@@ -224,6 +224,47 @@ class CheckoutResult {
   final Object? data;
 }
 
+class StoreOrder {
+  const StoreOrder({
+    required this.tradeNo,
+    required this.period,
+    required this.status,
+    required this.totalAmountCents,
+    required this.createdAt,
+    this.id,
+    this.planId,
+    this.type,
+    this.planName,
+    this.upgradeSourcePlanName,
+    this.upgradeTargetPlanName,
+    this.handlingAmountCents,
+    this.balanceAmountCents,
+    this.discountAmountCents,
+    this.upgradeCreditAmountCents,
+  });
+
+  final int? id;
+  final int? planId;
+  final int? type;
+  final String? planName;
+  final String? upgradeSourcePlanName;
+  final String? upgradeTargetPlanName;
+  final String tradeNo;
+  final String period;
+  final int status;
+  final int totalAmountCents;
+  final int? handlingAmountCents;
+  final int? balanceAmountCents;
+  final int? discountAmountCents;
+  final int? upgradeCreditAmountCents;
+  final DateTime? createdAt;
+
+  bool get isPending => status == 0;
+  bool get isRecharge =>
+      type == 5 || planId == 0 || period == 'deposit' || period == 'recharge';
+  bool get isDiscountUpgrade => type == 6;
+}
+
 class CheckoutQrPayload {
   const CheckoutQrPayload({
     required this.qrData,
