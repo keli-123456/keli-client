@@ -444,22 +444,37 @@ class RealKeliApi implements KeliApi {
     final total = _numValue(subscribe['transfer_enable']) ?? 0;
     final expiredAt =
         _intValue(subscribe['expired_at']) ?? _intValue(user['expired_at']);
+    final nextResetAt =
+        _dateTimeValue(subscribe['next_reset_at'] ?? user['next_reset_at']);
+    final resetDays = nextResetAt == null
+        ? 0
+        : nextResetAt.difference(DateTime.now()).inDays.clamp(0, 9999).toInt();
     return AppProfile(
       email: _stringValue(user['email']) ??
           _stringValue(subscribe['email']) ??
           '未登录',
+      uuid: _stringValue(subscribe['uuid']) ?? _stringValue(user['uuid']),
+      avatarUrl: _stringValue(user['avatar_url']),
       planName: _stringValue(plan['name']) ?? '未订阅',
       planId: _intValue(subscribe['plan_id']) ??
           _intValue(user['plan_id']) ??
           _intValue(plan['id']) ??
           0,
       upgradeTargetPlanIds: _intList(plan['upgrade_to_plan_ids']),
+      deviceLimit: _intValue(subscribe['device_limit']) ??
+          _intValue(user['device_limit']) ??
+          _intValue(plan['device_limit']),
+      speedLimit: (_numValue(subscribe['speed_limit']) ??
+              _numValue(user['speed_limit']) ??
+              _numValue(plan['speed_limit']))
+          ?.toDouble(),
+      nextResetAt: nextResetAt,
       expireAt: expiredAt == null || expiredAt <= 0
           ? DateTime(2099, 12, 31)
           : DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000),
       usedTrafficGb: _bytesToGb(upload + download),
       totalTrafficGb: _bytesToGb(total),
-      resetDay: _intValue(subscribe['reset_day']) ?? 0,
+      resetDay: _intValue(subscribe['reset_day']) ?? resetDays,
     );
   }
 
@@ -913,285 +928,4 @@ class ApiException implements Exception {
 
   @override
   String toString() => message;
-}
-
-class MockKeliApi implements KeliApi {
-  @override
-  Future<LoginResult> login({
-    required String baseUrl,
-    required String apiPrefix,
-    required String email,
-    required String password,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-    return LoginResult(
-      session: ApiSession(
-        baseUrl: baseUrl,
-        apiPrefix: apiPrefix,
-        authData: 'Bearer mock-auth-data',
-        subscribeToken: 'mock-token',
-      ),
-    );
-  }
-
-  @override
-  Future<BootstrapPayload> bootstrap() async {
-    await Future<void>.delayed(const Duration(milliseconds: 280));
-    return BootstrapPayload(
-      profile: AppProfile(
-        email: 'user@996cloud.huhu.icu',
-        planName: '标准套餐',
-        planId: 1,
-        upgradeTargetPlanIds: [2],
-        expireAt: DateTime(2026, 6, 30, 23, 59, 59),
-        usedTrafficGb: 321.6,
-        totalTrafficGb: 1024,
-        resetDay: 12,
-      ),
-      nodes: _nodes,
-    );
-  }
-
-  @override
-  Future<List<ProxyNode>> fetchServers() async {
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    return _nodes;
-  }
-
-  @override
-  Future<List<StorePlan>> fetchPlans() async {
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-    return const [
-      StorePlan(
-        id: 1,
-        name: '标准套餐',
-        content: '适合日常浏览、视频和多设备轻量使用',
-        prices: {
-          'month_price': 1200,
-          'quarter_price': 3200,
-          'year_price': 11800
-        },
-        transferEnable: 500,
-        speedLimit: null,
-        deviceLimit: 5,
-        sell: true,
-        renew: true,
-        sort: 1,
-      ),
-      StorePlan(
-        id: 2,
-        name: '旗舰套餐',
-        content: '更高流量和更多节点，适合长期主力使用',
-        prices: {
-          'month_price': 2200,
-          'quarter_price': 6000,
-          'year_price': 21800
-        },
-        transferEnable: 1024,
-        speedLimit: null,
-        deviceLimit: 10,
-        sell: true,
-        renew: true,
-        sort: 2,
-      ),
-      StorePlan(
-        id: 3,
-        name: '临时流量包',
-        content: '不改变当前套餐，临时补充可用流量',
-        prices: {'onetime_price': 900},
-        transferEnable: 100,
-        speedLimit: null,
-        deviceLimit: null,
-        sell: true,
-        renew: false,
-        sort: 3,
-      ),
-    ];
-  }
-
-  @override
-  Future<Map<String, Object?>> fetchUserConfig() async {
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    return <String, Object?>{
-      'upgrade_v2_enable': true,
-      'plan_change_enable': true,
-    };
-  }
-
-  @override
-  Future<List<PaymentMethod>> fetchPaymentMethods() async {
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    return const [
-      PaymentMethod(id: '1', name: '余额支付', payment: 'balance'),
-      PaymentMethod(id: '2', name: '在线支付', payment: 'gateway'),
-    ];
-  }
-
-  @override
-  Future<List<StoreOrder>> fetchOrders() async {
-    await Future<void>.delayed(const Duration(milliseconds: 160));
-    return [
-      StoreOrder(
-        id: 1,
-        planId: 1,
-        planName: '标准套餐',
-        tradeNo: 'MOCK-PENDING-001',
-        period: 'month_price',
-        status: 0,
-        totalAmountCents: 1200,
-        createdAt: DateTime.now().subtract(const Duration(minutes: 18)),
-      ),
-      StoreOrder(
-        id: 2,
-        planId: 2,
-        planName: '旗舰套餐',
-        tradeNo: 'MOCK-PAID-002',
-        period: 'year_price',
-        status: 3,
-        totalAmountCents: 21800,
-        createdAt: DateTime.now().subtract(const Duration(days: 6)),
-      ),
-    ];
-  }
-
-  @override
-  Future<String> createOrder({
-    required int planId,
-    required String period,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 260));
-    return 'MOCK${DateTime.now().millisecondsSinceEpoch}';
-  }
-
-  @override
-  Future<UpgradePreview> previewUpgrade({
-    required int targetPlanId,
-    required String period,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 240));
-    return const UpgradePreview(
-      allowUpgrade: true,
-      quoteToken: 'mock-upgrade-quote-token',
-      payableAmountCents: 1200,
-      targetPriceCents: 2200,
-      upgradeCreditAmountCents: 1000,
-      sourcePlanName: '标准套餐',
-      targetPlanName: '旗舰套餐',
-    );
-  }
-
-  @override
-  Future<String> confirmUpgrade({
-    required String quoteToken,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 260));
-    return 'UPG${DateTime.now().millisecondsSinceEpoch}';
-  }
-
-  @override
-  Future<CheckoutResult> checkoutOrder({
-    required String tradeNo,
-    required String method,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 260));
-    if (method == '1') {
-      return const CheckoutResult(type: -1, data: true);
-    }
-    return CheckoutResult(
-        type: 1, data: 'https://sp.huhu.icu/#/order/$tradeNo');
-  }
-
-  @override
-  Future<int> checkOrder({
-    required String tradeNo,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 160));
-    return 0;
-  }
-
-  @override
-  Future<void> cancelOrder({
-    required String tradeNo,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-  }
-
-  @override
-  Future<Map<String, Object?>> fetchSingBoxConfig({
-    required int serverId,
-    required String platform,
-    String? coreVersion,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-    return <String, Object?>{
-      'log': <String, Object?>{'level': 'info'},
-      'inbounds': <Object?>[
-        <String, Object?>{
-          'type': 'mixed',
-          'listen': '127.0.0.1',
-          'listen_port': 20808,
-        },
-      ],
-      'outbounds': <Object?>[
-        <String, Object?>{
-          'type': 'selector',
-          'tag': '节点选择',
-          'default': 'server-$serverId',
-          'outbounds': <String>['server-$serverId'],
-        },
-      ],
-      'route': <String, Object?>{'auto_detect_interface': true},
-      'platform': platform,
-      'core_version': coreVersion,
-    };
-  }
-
-  static const _nodes = <ProxyNode>[
-    ProxyNode(
-      id: 49,
-      name: '日本-HY2-49',
-      protocol: 'Hysteria2',
-      rate: 1,
-      isOnline: true,
-      latencyMs: 304,
-      tags: ['日本', '低延迟'],
-    ),
-    ProxyNode(
-      id: 50,
-      name: '日本-HY2-50',
-      protocol: 'Hysteria2',
-      rate: 1,
-      isOnline: true,
-      latencyMs: 589,
-      tags: ['日本'],
-    ),
-    ProxyNode(
-      id: 51,
-      name: '日本-HY2-51',
-      protocol: 'Hysteria2',
-      rate: 1,
-      isOnline: true,
-      latencyMs: 1075,
-      isFavorite: true,
-      tags: ['日本', '二进制'],
-    ),
-    ProxyNode(
-      id: 55,
-      name: '新加坡-HY2-55',
-      protocol: 'Hysteria2',
-      rate: 1.2,
-      isOnline: false,
-      latencyMs: null,
-      tags: ['新加坡'],
-    ),
-    ProxyNode(
-      id: 62,
-      name: '美国-VLESS-62',
-      protocol: 'VLESS',
-      rate: 1,
-      isOnline: true,
-      latencyMs: 268,
-      tags: ['美国', '低延迟'],
-    ),
-  ];
 }

@@ -75,6 +75,11 @@ class AppProfile {
     required this.usedTrafficGb,
     required this.totalTrafficGb,
     required this.resetDay,
+    this.uuid,
+    this.avatarUrl,
+    this.deviceLimit,
+    this.speedLimit,
+    this.nextResetAt,
     this.planId = 0,
     this.upgradeTargetPlanIds = const [],
   });
@@ -85,6 +90,11 @@ class AppProfile {
   final double usedTrafficGb;
   final double totalTrafficGb;
   final int resetDay;
+  final String? uuid;
+  final String? avatarUrl;
+  final int? deviceLimit;
+  final double? speedLimit;
+  final DateTime? nextResetAt;
   final int planId;
   final List<int> upgradeTargetPlanIds;
 
@@ -380,11 +390,27 @@ class RuntimeStats {
     required this.uploadSpeed,
     required this.downloadSpeed,
     required this.duration,
+    this.sessionTraffic = '0 MB',
   });
 
   final String uploadSpeed;
   final String downloadSpeed;
   final Duration duration;
+  final String sessionTraffic;
+
+  RuntimeStats copyWith({
+    String? uploadSpeed,
+    String? downloadSpeed,
+    Duration? duration,
+    String? sessionTraffic,
+  }) {
+    return RuntimeStats(
+      uploadSpeed: uploadSpeed ?? this.uploadSpeed,
+      downloadSpeed: downloadSpeed ?? this.downloadSpeed,
+      duration: duration ?? this.duration,
+      sessionTraffic: sessionTraffic ?? this.sessionTraffic,
+    );
+  }
 }
 
 class CoreDiagnostics {

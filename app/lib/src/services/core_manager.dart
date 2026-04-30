@@ -40,7 +40,8 @@ class CoreApplyResult {
 class WindowsCoreManager implements CoreManager {
   WindowsCoreManager({Directory? runtimeRoot})
       : runtimeRoot = runtimeRoot ??
-            Directory('${SessionStore.defaultAppDataDirectory().path}${Platform.pathSeparator}runtime');
+            Directory(
+                '${SessionStore.defaultAppDataDirectory().path}${Platform.pathSeparator}runtime');
 
   final Directory runtimeRoot;
   Process? _process;
@@ -49,13 +50,20 @@ class WindowsCoreManager implements CoreManager {
   String _localProxyType = 'mixed';
   String _localProxyListen = '127.0.0.1';
 
-  Directory get _coreDir => Directory('${runtimeRoot.path}${Platform.pathSeparator}core');
-  Directory get _configDir => Directory('${runtimeRoot.path}${Platform.pathSeparator}config');
-  Directory get _logsDir => Directory('${runtimeRoot.path}${Platform.pathSeparator}logs');
-  File get _configFile => File('${_configDir.path}${Platform.pathSeparator}sing-box.json');
-  File get _logFile => File('${_logsDir.path}${Platform.pathSeparator}sing-box.log');
-  File get _proxyStateFile => File('${runtimeRoot.path}${Platform.pathSeparator}proxy-state.json');
-  File get _coreExe => File('${_coreDir.path}${Platform.pathSeparator}sing-box.exe');
+  Directory get _coreDir =>
+      Directory('${runtimeRoot.path}${Platform.pathSeparator}core');
+  Directory get _configDir =>
+      Directory('${runtimeRoot.path}${Platform.pathSeparator}config');
+  Directory get _logsDir =>
+      Directory('${runtimeRoot.path}${Platform.pathSeparator}logs');
+  File get _configFile =>
+      File('${_configDir.path}${Platform.pathSeparator}sing-box.json');
+  File get _logFile =>
+      File('${_logsDir.path}${Platform.pathSeparator}sing-box.log');
+  File get _proxyStateFile =>
+      File('${runtimeRoot.path}${Platform.pathSeparator}proxy-state.json');
+  File get _coreExe =>
+      File('${_coreDir.path}${Platform.pathSeparator}sing-box.exe');
 
   @override
   Future<void> prepare() async {
@@ -79,7 +87,8 @@ class WindowsCoreManager implements CoreManager {
   }) async {
     await _configDir.create(recursive: true);
     final normalized = _normalizeConfigForMode(config, mode);
-    final localProxy = _detectLocalProxyEndpoint(normalized) ?? _addMixedInbound(normalized);
+    final localProxy =
+        _detectLocalProxyEndpoint(normalized) ?? _addMixedInbound(normalized);
     _localProxyPort = localProxy.port;
     _localProxyType = localProxy.type;
     _localProxyListen = localProxy.listen;
@@ -118,8 +127,12 @@ class WindowsCoreManager implements CoreManager {
       environment: _singBoxEnvironment(),
     );
     _process = process;
-    process.stdout.transform(utf8.decoder).listen((line) => _writeLog(line.trimRight()));
-    process.stderr.transform(utf8.decoder).listen((line) => _writeLog(line.trimRight()));
+    process.stdout
+        .transform(utf8.decoder)
+        .listen((line) => _writeLog(line.trimRight()));
+    process.stderr
+        .transform(utf8.decoder)
+        .listen((line) => _writeLog(line.trimRight()));
     unawaited(process.exitCode.then((code) {
       _writeLog('sing-box exited with code $code');
       _process = null;
@@ -128,7 +141,8 @@ class WindowsCoreManager implements CoreManager {
     if (mode == ProxyMode.system) {
       await _enableSystemProxy();
     } else if (mode == ProxyMode.tun) {
-      _writeLog('TUN mode selected; sing-box config must include a tun inbound and may require administrator privileges.');
+      _writeLog(
+          'TUN mode selected; sing-box config must include a tun inbound and may require administrator privileges.');
     }
   }
 
@@ -155,12 +169,7 @@ class WindowsCoreManager implements CoreManager {
 
   @override
   Future<int?> testLatency(ProxyNode node) async {
-    if (!node.isOnline) {
-      return null;
-    }
-    final base = node.latencyMs ?? 420;
-    final next = base - 40 + (node.id * 17 % 120);
-    return next.clamp(80, 1800).toInt();
+    return null;
   }
 
   @override
@@ -170,7 +179,8 @@ class WindowsCoreManager implements CoreManager {
     final logExists = await _logFile.exists();
     final proxyEnable = await _queryRegValue('ProxyEnable');
     final proxyServer = await _queryRegValue('ProxyServer');
-    final check = await _checkConfig(coreExists: coreExists, configExists: configExists);
+    final check =
+        await _checkConfig(coreExists: coreExists, configExists: configExists);
 
     return CoreDiagnostics(
       updatedAt: DateTime.now(),
@@ -198,13 +208,16 @@ class WindowsCoreManager implements CoreManager {
     required bool configExists,
   }) async {
     if (!Platform.isWindows) {
-      return const _ConfigCheckResult(status: 'skipped', output: '当前平台未接入本地 sing-box 校验');
+      return const _ConfigCheckResult(
+          status: 'skipped', output: '当前平台未接入本地 sing-box 校验');
     }
     if (!coreExists) {
-      return const _ConfigCheckResult(status: 'missing-core', output: 'sing-box.exe 不存在');
+      return const _ConfigCheckResult(
+          status: 'missing-core', output: 'sing-box.exe 不存在');
     }
     if (!configExists) {
-      return const _ConfigCheckResult(status: 'missing-config', output: 'sing-box.json 不存在');
+      return const _ConfigCheckResult(
+          status: 'missing-config', output: 'sing-box.json 不存在');
     }
 
     try {
@@ -223,7 +236,8 @@ class WindowsCoreManager implements CoreManager {
         output: output.isEmpty ? 'exit=${result.exitCode}' : _stripAnsi(output),
       );
     } on TimeoutException {
-      return const _ConfigCheckResult(status: 'timeout', output: 'sing-box check 超时');
+      return const _ConfigCheckResult(
+          status: 'timeout', output: 'sing-box check 超时');
     } catch (error) {
       return _ConfigCheckResult(status: 'error', output: '$error');
     }
@@ -248,10 +262,12 @@ class WindowsCoreManager implements CoreManager {
 
   Future<void> _downloadSingBox() async {
     final asset = await _resolveLatestWindowsAsset();
-    final zipFile = File('${runtimeRoot.path}${Platform.pathSeparator}sing-box-windows-amd64.zip');
+    final zipFile = File(
+        '${runtimeRoot.path}${Platform.pathSeparator}sing-box-windows-amd64.zip');
     _writeLog('Downloading sing-box ${asset.version}');
     await _downloadFile(Uri.parse(asset.url), zipFile);
-    final extractDir = Directory('${runtimeRoot.path}${Platform.pathSeparator}sing-box-extract');
+    final extractDir = Directory(
+        '${runtimeRoot.path}${Platform.pathSeparator}sing-box-extract');
     if (await extractDir.exists()) {
       await extractDir.delete(recursive: true);
     }
@@ -280,9 +296,12 @@ class WindowsCoreManager implements CoreManager {
   }
 
   Future<_SingBoxAsset> _resolveLatestWindowsAsset() async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
-    final request = await client.getUrl(Uri.parse('https://api.github.com/repos/SagerNet/sing-box/releases/latest'));
-    request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+    final request = await client.getUrl(Uri.parse(
+        'https://api.github.com/repos/SagerNet/sing-box/releases/latest'));
+    request.headers
+        .set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
     request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
     final response = await request.close();
     final raw = await response.transform(utf8.decoder).join();
@@ -313,7 +332,8 @@ class WindowsCoreManager implements CoreManager {
   }
 
   Future<void> _downloadFile(Uri uri, File destination) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
     final request = await client.getUrl(uri);
     request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
     final response = await request.close();
@@ -327,25 +347,36 @@ class WindowsCoreManager implements CoreManager {
 
   Future<File?> _findFile(Directory root, String fileName) async {
     await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is File && entity.uri.pathSegments.last.toLowerCase() == fileName.toLowerCase()) {
+      if (entity is File &&
+          entity.uri.pathSegments.last.toLowerCase() ==
+              fileName.toLowerCase()) {
         return entity;
       }
     }
     return null;
   }
 
-  Map<String, Object?> _normalizeConfigForMode(Map<String, Object?> config, ProxyMode mode) {
+  Map<String, Object?> _normalizeConfigForMode(
+      Map<String, Object?> config, ProxyMode mode) {
     final normalized = Map<String, Object?>.from(config);
     final rawInbounds = normalized['inbounds'];
-    final inbounds = rawInbounds is List ? List<Object?>.from(rawInbounds) : <Object?>[];
+    final inbounds =
+        rawInbounds is List ? List<Object?>.from(rawInbounds) : <Object?>[];
     normalized['inbounds'] = inbounds;
 
     if (mode == ProxyMode.system) {
-      inbounds.removeWhere((item) => item is Map && '${item['type']}'.toLowerCase() == 'tun');
-      if (_detectLocalProxyEndpoint(normalized, preferredTypes: const ['mixed', 'http']) == null) {
+      inbounds.removeWhere(
+          (item) => item is Map && '${item['type']}'.toLowerCase() == 'tun');
+      if (_detectLocalProxyEndpoint(normalized,
+              preferredTypes: const ['mixed', 'http']) ==
+          null) {
         final endpoint = _addMixedInbound(normalized);
         _prependRouteRules(normalized, <Map<String, Object?>>[
-          <String, Object?>{'inbound': endpoint.tag, 'action': 'resolve', 'strategy': 'prefer_ipv4'},
+          <String, Object?>{
+            'inbound': endpoint.tag,
+            'action': 'resolve',
+            'strategy': 'prefer_ipv4'
+          },
           <String, Object?>{'inbound': endpoint.tag, 'action': 'sniff'},
         ]);
       }
@@ -373,7 +404,8 @@ class WindowsCoreManager implements CoreManager {
       'listen_port': port,
       'users': <Object?>[],
     });
-    return _LocalProxyEndpoint(type: 'mixed', tag: tag, listen: '127.0.0.1', port: port);
+    return _LocalProxyEndpoint(
+        type: 'mixed', tag: tag, listen: '127.0.0.1', port: port);
   }
 
   int _nextLocalPort(List<Object?> inbounds) {
@@ -460,7 +492,8 @@ class WindowsCoreManager implements CoreManager {
         routeRules.add(<String, Object?>{
           'inbound': tag,
           'action': 'sniff',
-          if (sniffTimeout != null && sniffTimeout.isNotEmpty) 'timeout': sniffTimeout,
+          if (sniffTimeout != null && sniffTimeout.isNotEmpty)
+            'timeout': sniffTimeout,
         });
       }
     }
@@ -515,10 +548,12 @@ class WindowsCoreManager implements CoreManager {
     if (children is! List) {
       return;
     }
-    outbound['outbounds'] = children.where((item) => !removedTags.contains('$item')).toList();
+    outbound['outbounds'] =
+        children.where((item) => !removedTags.contains('$item')).toList();
   }
 
-  void _rewriteRemovedOutboundRules(Map<String, Object?> config, Map<String, String> removedActions) {
+  void _rewriteRemovedOutboundRules(
+      Map<String, Object?> config, Map<String, String> removedActions) {
     final route = _ensureRoute(config);
     final rules = route['rules'];
     if (rules is! List) {
@@ -540,7 +575,8 @@ class WindowsCoreManager implements CoreManager {
     }
   }
 
-  void _prependRouteRules(Map<String, Object?> config, List<Map<String, Object?>> newRules) {
+  void _prependRouteRules(
+      Map<String, Object?> config, List<Map<String, Object?>> newRules) {
     if (newRules.isEmpty) {
       return;
     }
@@ -569,7 +605,11 @@ class WindowsCoreManager implements CoreManager {
     if (outbounds is! List) {
       throw const CoreException('sing-box 配置缺少 outbounds');
     }
-    final tags = outbounds.whereType<Map>().map((item) => _stringValue(item['tag'])).whereType<String>().toSet();
+    final tags = outbounds
+        .whereType<Map>()
+        .map((item) => _stringValue(item['tag']))
+        .whereType<String>()
+        .toSet();
     final missing = <String>{};
     final emptyGroups = <String>[];
 
@@ -612,7 +652,10 @@ class WindowsCoreManager implements CoreManager {
 
   String _safeProxyHost(Object? listen) {
     final value = listen == null ? '' : '$listen'.trim();
-    if (value.isEmpty || value == '::' || value == '0.0.0.0' || value == '[::]') {
+    if (value.isEmpty ||
+        value == '::' ||
+        value == '0.0.0.0' ||
+        value == '[::]') {
       return '127.0.0.1';
     }
     return value;
@@ -668,8 +711,28 @@ class WindowsCoreManager implements CoreManager {
     final proxy = _localProxyType == 'socks'
         ? 'socks=$_localProxyListen:$_localProxyPort'
         : '$_localProxyListen:$_localProxyPort';
-    await _runReg(['add', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '1', '/f']);
-    await _runReg(['add', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', proxy, '/f']);
+    await _runReg([
+      'add',
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+      '/v',
+      'ProxyEnable',
+      '/t',
+      'REG_DWORD',
+      '/d',
+      '1',
+      '/f'
+    ]);
+    await _runReg([
+      'add',
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+      '/v',
+      'ProxyServer',
+      '/t',
+      'REG_SZ',
+      '/d',
+      proxy,
+      '/f'
+    ]);
     await _notifyProxyChanged();
     _writeLog('System proxy enabled: $proxy');
   }
@@ -699,14 +762,46 @@ class WindowsCoreManager implements CoreManager {
         final enable = state['proxy_enable'];
         final server = state['proxy_server'];
         if (enable == null || '$enable'.isEmpty) {
-          await _runReg(['delete', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyEnable', '/f'], allowFailure: true);
+          await _runReg([
+            'delete',
+            r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+            '/v',
+            'ProxyEnable',
+            '/f'
+          ], allowFailure: true);
         } else {
-          await _runReg(['add', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '$enable', '/f']);
+          await _runReg([
+            'add',
+            r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+            '/v',
+            'ProxyEnable',
+            '/t',
+            'REG_DWORD',
+            '/d',
+            '$enable',
+            '/f'
+          ]);
         }
         if (server == null || '$server'.isEmpty) {
-          await _runReg(['delete', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyServer', '/f'], allowFailure: true);
+          await _runReg([
+            'delete',
+            r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+            '/v',
+            'ProxyServer',
+            '/f'
+          ], allowFailure: true);
         } else {
-          await _runReg(['add', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', 'ProxyServer', '/t', 'REG_SZ', '/d', '$server', '/f']);
+          await _runReg([
+            'add',
+            r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+            '/v',
+            'ProxyServer',
+            '/t',
+            'REG_SZ',
+            '/d',
+            '$server',
+            '/f'
+          ]);
         }
         await _notifyProxyChanged();
       }
@@ -716,7 +811,12 @@ class WindowsCoreManager implements CoreManager {
   }
 
   Future<String?> _queryRegValue(String name) async {
-    final result = await Process.run('reg.exe', ['query', r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings', '/v', name]);
+    final result = await Process.run('reg.exe', [
+      'query',
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+      '/v',
+      name
+    ]);
     if (result.exitCode != 0) {
       return null;
     }
@@ -752,7 +852,8 @@ public class NativeMethods {
 [NativeMethods]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null
 [NativeMethods]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
 ''';
-    await Process.run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script]);
+    await Process.run('powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script]);
   }
 
   void _writeLog(String message) {
@@ -764,70 +865,6 @@ public class NativeMethods {
   }
 
   String _psQuote(String value) => "'${value.replaceAll("'", "''")}'";
-}
-
-class MockCoreManager implements CoreManager {
-  @override
-  Future<void> prepare() async {
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-  }
-
-  @override
-  Future<CoreApplyResult> applyConfig(
-    Map<String, Object?> config, {
-    ProxyMode mode = ProxyMode.system,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 160));
-    return CoreApplyResult(configFile: File('mock-sing-box.json'), localProxyPort: 20808);
-  }
-
-  @override
-  Future<void> connect({
-    required ProxyNode node,
-    required ProxyMode mode,
-  }) async {
-    await Future<void>.delayed(const Duration(milliseconds: 520));
-  }
-
-  @override
-  Future<void> disconnect() async {
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-  }
-
-  @override
-  Future<int?> testLatency(ProxyNode node) async {
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    if (!node.isOnline) {
-      return null;
-    }
-    final base = node.latencyMs ?? 420;
-    final next = base - 40 + (node.id * 17 % 120);
-    return next.clamp(80, 1800).toInt();
-  }
-
-  @override
-  Future<CoreDiagnostics> diagnostics() async {
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    return CoreDiagnostics(
-      updatedAt: DateTime.now(),
-      runtimeRoot: 'mock-runtime',
-      corePath: 'mock-runtime/core/sing-box.exe',
-      coreExists: true,
-      configPath: 'mock-runtime/config/sing-box.json',
-      configExists: true,
-      logPath: 'mock-runtime/logs/sing-box.log',
-      logExists: true,
-      processRunning: false,
-      localProxyType: 'mixed',
-      localProxyListen: '127.0.0.1',
-      localProxyPort: 20808,
-      systemProxyEnabled: false,
-      systemProxyServer: null,
-      configCheckStatus: 'ok',
-      configCheckOutput: 'mock config is valid',
-      logTail: const <String>['mock log tail'],
-    );
-  }
 }
 
 class CoreException implements Exception {

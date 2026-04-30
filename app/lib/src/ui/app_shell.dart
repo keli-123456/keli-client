@@ -457,12 +457,12 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v1.0.0',
+            Text('v0.1.0',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
         SizedBox(height: 4),
-        Text('已是最新版', style: TextStyle(color: keliMuted, fontSize: 11)),
+        Text('当前版本', style: TextStyle(color: keliMuted, fontSize: 11)),
       ],
     );
   }
@@ -549,6 +549,7 @@ class _DesktopAccountBar extends StatelessWidget {
         profile == null ? '-' : profile!.remainingTrafficGb.toStringAsFixed(2);
     final daysLeft = profile == null ? '-' : daysLeftText(profile!.expireAt);
     final email = profile?.email ?? '未登录';
+    final accountMeta = profile == null ? '套餐: -' : profileMetaText(profile!);
     return KeliCard(
       padding: EdgeInsets.zero,
       child: IntrinsicHeight(
@@ -560,11 +561,11 @@ class _DesktopAccountBar extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
                 child: Row(
                   children: [
-                    const CircleAvatar(
+                    CircleAvatar(
                       radius: 25,
                       backgroundColor: keliBlueSoft,
-                      child: Text('KE',
-                          style: TextStyle(
+                      child: Text(profileInitials(profile),
+                          style: const TextStyle(
                               color: keliBlueStrong,
                               fontWeight: FontWeight.w900)),
                     ),
@@ -582,12 +583,17 @@ class _DesktopAccountBar extends StatelessWidget {
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w800))),
                               const SizedBox(width: 8),
-                              const _MiniBadge(text: '高级版', color: keliOrange),
+                              _MiniBadge(
+                                  text: subscriptionBadgeText(profile),
+                                  color: subscriptionBadgeColor(profile)),
                             ],
                           ),
                           const SizedBox(height: 7),
-                          const Text('UID: 10086    设备数: 1/5',
-                              style: TextStyle(color: keliMuted, fontSize: 12)),
+                          Text(accountMeta,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: keliMuted, fontSize: 12)),
                         ],
                       ),
                     ),
@@ -888,7 +894,7 @@ class _SelectedNodeCard extends StatelessWidget {
               ],
             ),
           ),
-          const _MiniBadge(text: '自动选择', color: keliGreen),
+          const _MiniBadge(text: '已选择', color: keliGreen),
           const SizedBox(width: 8),
           const Icon(Icons.chevron_right, color: keliMuted, size: 18),
         ],
@@ -958,7 +964,7 @@ class _CurrentNodePanel extends StatelessWidget {
                     ],
                   ),
                 ),
-                const _MiniBadge(text: '自动选择', color: keliGreen),
+                const _MiniBadge(text: '已选择', color: keliGreen),
               ],
             ),
           ),
@@ -1061,9 +1067,9 @@ class _ModeAndRoutePanel extends StatelessWidget {
           const Text('分流设置',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
           const SizedBox(height: 4),
-          const DetailLine(label: '绕过中国大陆', value: '启用', color: keliGreen),
-          const DetailLine(label: '绕过局域网', value: '启用', color: keliGreen),
-          const DetailLine(label: 'DNS', value: '自动 (1.1.1.1)'),
+          const DetailLine(label: '路由规则', value: '跟随配置'),
+          const DetailLine(label: '局域网规则', value: '跟随配置'),
+          const DetailLine(label: 'DNS', value: '跟随配置'),
         ],
       ),
     );
@@ -1277,11 +1283,11 @@ class _AccountPanel extends StatelessWidget {
           children: [
             Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 22,
                   backgroundColor: keliBlueSoft,
-                  child: Text('KE',
-                      style: TextStyle(
+                  child: Text(profileInitials(profile),
+                      style: const TextStyle(
                           color: keliBlueStrong, fontWeight: FontWeight.w900)),
                 ),
                 const SizedBox(width: 12),
@@ -1299,7 +1305,9 @@ class _AccountPanel extends StatelessWidget {
                     ],
                   ),
                 ),
-                const _MiniBadge(text: '高级版', color: keliOrange),
+                _MiniBadge(
+                    text: subscriptionBadgeText(profile),
+                    color: subscriptionBadgeColor(profile)),
               ],
             ),
             const SizedBox(height: 14),
@@ -1377,7 +1385,7 @@ class _AccountPanel extends StatelessWidget {
               MetricItem(
                   label: '已用',
                   value: '${profile!.usedTrafficGb.toStringAsFixed(1)} GB'),
-              MetricItem(label: '重置', value: '${profile!.resetDay} 天'),
+              MetricItem(label: '重置', value: profileResetText(profile!)),
             ],
           ),
         ],
@@ -1396,7 +1404,6 @@ class _RuntimeStrip extends StatelessWidget {
     final controller = AppControllerScope.of(context);
     final duration = controller.stats.duration;
     final durationText = durationClockText(duration);
-    final active = controller.connectionState == ConnectionStateKind.connected;
     final items = [
       _RuntimeMetricData(
           label: '下载速度',
@@ -1410,7 +1417,7 @@ class _RuntimeStrip extends StatelessWidget {
           color: keliBlueStrong),
       _RuntimeMetricData(
           label: '本次用量',
-          value: active ? '256.34 MB' : '0 MB',
+          value: controller.stats.sessionTraffic,
           icon: Icons.donut_large_rounded,
           color: const Color(0xFF8B5CF6)),
       _RuntimeMetricData(
@@ -2915,15 +2922,11 @@ class _StorePricingCard extends StatelessWidget {
                   color: keliMuted, fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 28),
           _PlanSpecRow(
-              icon: Icons.play_circle_outline, label: '流媒体解锁', value: '主流解锁'),
-          _PlanSpecRow(
               icon: Icons.devices_outlined,
               label: '允许设备',
               value: plan.deviceLimit == null || plan.deviceLimit == 0
                   ? '无限制'
                   : '${plan.deviceLimit} 台'),
-          const _PlanSpecRow(
-              icon: Icons.storage_outlined, label: '节点数量', value: '全部节点'),
           _PlanSpecRow(
               icon: Icons.wifi_rounded,
               label: trafficMode ? '可用流量' : '每月可用流量',
@@ -6474,6 +6477,80 @@ class SettingsTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String profileInitials(AppProfile? profile) {
+  final raw = (profile?.email.split('@').first ?? 'K').trim();
+  if (raw.isEmpty) {
+    return 'K';
+  }
+  final letters = RegExp(r'[A-Za-z0-9]+')
+      .allMatches(raw)
+      .map((match) => match.group(0) ?? '')
+      .join();
+  final source = letters.isNotEmpty ? letters : raw;
+  return source.runes.take(2).map(String.fromCharCode).join().toUpperCase();
+}
+
+String subscriptionBadgeText(AppProfile? profile) {
+  if (profile == null) {
+    return '未登录';
+  }
+  return profile.hasActiveSubscription ? '有效' : '未订阅';
+}
+
+Color subscriptionBadgeColor(AppProfile? profile) {
+  if (profile == null) {
+    return keliMuted;
+  }
+  return profile.hasActiveSubscription ? keliGreen : keliOrange;
+}
+
+String profileMetaText(AppProfile profile) {
+  final parts = <String>[
+    '套餐: ${profile.planName.trim().isEmpty ? '未订阅' : profile.planName}',
+    if (profile.uuid != null && profile.uuid!.trim().isNotEmpty)
+      'UUID: ${shortTokenText(profile.uuid!)}',
+    '设备限制: ${deviceLimitText(profile.deviceLimit)}',
+    '速率: ${speedLimitText(profile.speedLimit)}',
+  ];
+  return parts.join('    ');
+}
+
+String shortTokenText(String value) {
+  final normalized = value.trim();
+  if (normalized.length <= 14) {
+    return normalized;
+  }
+  return '${normalized.substring(0, 8)}...${normalized.substring(normalized.length - 4)}';
+}
+
+String deviceLimitText(int? value) {
+  if (value == null || value <= 0) {
+    return '无限制';
+  }
+  return '$value 台';
+}
+
+String speedLimitText(double? value) {
+  if (value == null || value <= 0) {
+    return '无限制';
+  }
+  final text = value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toStringAsFixed(1);
+  return '$text Mbps';
+}
+
+String profileResetText(AppProfile profile) {
+  final nextResetAt = profile.nextResetAt;
+  if (nextResetAt != null) {
+    return dateText(nextResetAt);
+  }
+  if (profile.resetDay > 0) {
+    return '${profile.resetDay} 天';
+  }
+  return '-';
 }
 
 String latencyText(int? latencyMs) {

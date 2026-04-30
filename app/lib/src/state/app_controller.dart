@@ -35,7 +35,7 @@ class AppController extends ChangeNotifier {
   String? selectedPaymentMethodId;
   bool discountUpgradeEnabled = false;
   List<ProxyNode> nodes = const [];
-  int selectedNodeId = 49;
+  int selectedNodeId = 0;
   int selectedPage = 0;
   NodeFilter nodeFilter = NodeFilter.all;
   ProxyMode proxyMode = ProxyMode.system;
@@ -46,9 +46,10 @@ class AppController extends ChangeNotifier {
     duration: Duration.zero,
   );
   final List<LogEntry> logs = <LogEntry>[
-    LogEntry(
-        time: DateTime(2026, 4, 29, 19, 20), level: 'INFO', message: '客户端已启动'),
+    LogEntry(time: DateTime.now(), level: 'INFO', message: '客户端已启动'),
   ];
+  Timer? _runtimeTimer;
+  DateTime? _connectedAt;
 
   ProxyNode? get selectedNode {
     for (final node in nodes) {
@@ -583,6 +584,12 @@ class AppController extends ChangeNotifier {
     if (node == null) {
       return;
     }
+    _stopRuntimeTimer();
+    stats = const RuntimeStats(
+      uploadSpeed: '0 KB/s',
+      downloadSpeed: '0 KB/s',
+      duration: Duration.zero,
+    );
     connectionState = ConnectionStateKind.connecting;
     _log('INFO', '正在连接 ${node.name}');
     notifyListeners();
@@ -599,13 +606,10 @@ class AppController extends ChangeNotifier {
       _log('INFO', '本地代理 ${applied.localProxyType}:${applied.localProxyPort}');
       await coreManager.connect(node: node, mode: proxyMode);
       connectionState = ConnectionStateKind.connected;
-      stats = const RuntimeStats(
-        uploadSpeed: '42 KB/s',
-        downloadSpeed: '1.8 MB/s',
-        duration: Duration(minutes: 3, seconds: 18),
-      );
+      _startRuntimeTimer();
       _log('INFO', '连接成功: ${node.name}');
     } catch (error) {
+      _stopRuntimeTimer();
       connectionState = ConnectionStateKind.error;
       _log('ERROR', '连接失败: $error');
     } finally {
@@ -617,6 +621,7 @@ class AppController extends ChangeNotifier {
     connectionState = ConnectionStateKind.connecting;
     _log('INFO', '正在断开连接');
     notifyListeners();
+    _stopRuntimeTimer();
     await coreManager.disconnect();
     connectionState = ConnectionStateKind.disconnected;
     stats = const RuntimeStats(
@@ -632,12 +637,20 @@ class AppController extends ChangeNotifier {
   Future<void> testAllLatency() async {
     _log('INFO', '开始测试节点延迟');
     final updated = <ProxyNode>[];
+    var measured = 0;
     for (final node in nodes) {
       final latency = await coreManager.testLatency(node);
+      if (latency != null) {
+        measured++;
+      }
       updated.add(node.copyWith(latencyMs: latency));
     }
     nodes = updated;
-    _log('INFO', '延迟测试完成');
+    if (measured == 0) {
+      _log('WARN', '当前版本未接入真实节点测速，延迟保持未测');
+    } else {
+      _log('INFO', '延迟测试完成，成功 $measured/${nodes.length} 个');
+    }
     notifyListeners();
   }
 
@@ -695,6 +708,38 @@ class AppController extends ChangeNotifier {
     }
 
     return buffer.toString();
+  }
+
+  void _startRuntimeTimer() {
+    _runtimeTimer?.cancel();
+    _connectedAt = DateTime.now();
+    stats = const RuntimeStats(
+      uploadSpeed: '0 KB/s',
+      downloadSpeed: '0 KB/s',
+      duration: Duration.zero,
+    );
+    _runtimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final connectedAt = _connectedAt;
+      if (connectedAt == null ||
+          connectionState != ConnectionStateKind.connected) {
+        return;
+      }
+      stats = stats.copyWith(duration: DateTime.now().difference(connectedAt));
+      notifyListeners();
+    });
+  }
+
+  void _stopRuntimeTimer() {
+    _runtimeTimer?.cancel();
+    _runtimeTimer = null;
+    _connectedAt = null;
+  }
+
+  @override
+  void dispose() {
+    _stopRuntimeTimer();
+    unawaited(coreManager.disconnect());
+    super.dispose();
   }
 
   void _log(String level, String message) {

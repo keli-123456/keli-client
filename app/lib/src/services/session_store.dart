@@ -8,7 +8,8 @@ class SessionStore {
 
   final Directory root;
 
-  File get _sessionFile => File('${root.path}${Platform.pathSeparator}session.json');
+  File get _sessionFile =>
+      File('${root.path}${Platform.pathSeparator}session.json');
 
   Future<ApiSession?> load() async {
     try {
@@ -41,10 +42,12 @@ class SessionStore {
         return Directory('$localAppData${Platform.pathSeparator}KeliClient');
       }
     }
-    final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     if (home != null && home.isNotEmpty) {
       return Directory('$home${Platform.pathSeparator}.keli-client');
     }
-    return Directory('${Directory.systemTemp.path}${Platform.pathSeparator}keli-client');
+    return Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}keli-client');
   }
 }
