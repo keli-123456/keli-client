@@ -9,6 +9,8 @@ import '../models.dart';
 import '../state/app_controller.dart';
 import '../theme.dart';
 
+const double keliDesktopBreakpoint = 1100;
+
 class AppShell extends StatelessWidget {
   const AppShell({super.key});
 
@@ -26,7 +28,7 @@ class AppShell extends StatelessWidget {
           return const LoginScreen();
         }
 
-        final isDesktop = constraints.maxWidth >= 900;
+        final isDesktop = constraints.maxWidth >= keliDesktopBreakpoint;
         final body =
             _PageBody(page: controller.selectedPage, isDesktop: isDesktop);
 
@@ -457,7 +459,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.1',
+            Text('v0.1.2',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -2027,7 +2029,7 @@ class _StoreScreenState extends State<StoreScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
-    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+    final isDesktop = MediaQuery.sizeOf(context).width >= keliDesktopBreakpoint;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5611,7 +5613,7 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
-    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+    final isDesktop = MediaQuery.sizeOf(context).width >= keliDesktopBreakpoint;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

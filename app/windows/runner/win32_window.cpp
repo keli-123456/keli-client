@@ -31,6 +31,9 @@ static int g_active_window_count = 0;
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
+constexpr int kMinWindowWidth = 960;
+constexpr int kMinWindowHeight = 640;
+
 // Scale helper to convert logical scaler values to physical using passed in
 // scale factor
 int Scale(int source, double scale_factor) {
@@ -179,6 +182,14 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_GETMINMAXINFO: {
+      auto minmax_info = reinterpret_cast<MINMAXINFO*>(lparam);
+      const double scale_factor = GetDpiForWindow(hwnd) / 96.0;
+      minmax_info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale_factor);
+      minmax_info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
+      return 0;
+    }
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
