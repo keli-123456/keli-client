@@ -481,7 +481,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.8',
+            Text('v0.1.9',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -1117,6 +1117,21 @@ class _NodePickerDialogState extends State<_NodePickerDialog> {
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.w900)),
                   ),
+                  OutlinedButton.icon(
+                    onPressed:
+                        controller.isTestingLatency || controller.nodes.isEmpty
+                            ? null
+                            : controller.testAllLatency,
+                    icon: controller.isTestingLatency
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.speed_outlined, size: 17),
+                    label: Text(controller.isTestingLatency ? '测速中' : '批量测速'),
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(
                     tooltip: '关闭',
                     onPressed: () => Navigator.of(context).pop(),
