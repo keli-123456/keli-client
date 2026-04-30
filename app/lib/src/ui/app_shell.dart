@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models.dart';
 import '../state/app_controller.dart';
@@ -3230,6 +3231,9 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
         detail = '支付链接打开失败，已复制到剪贴板';
       }
     }
+    if (purchase.qrPayload != null) {
+      detail = '请在弹出的二维码窗口完成支付，付款后可查询状态并刷新套餐';
+    }
 
     if (!mounted) {
       return;
@@ -3240,6 +3244,15 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       resultIsError = purchase.message.startsWith('购买失败') ||
           purchase.message.startsWith('支付失败');
     });
+    if (purchase.qrPayload != null) {
+      unawaited(showCheckoutQrDialog(
+        context: context,
+        controller: widget.controller,
+        payload: purchase.qrPayload!,
+        tradeNo: purchase.tradeNo ?? tradeNo,
+        successMessage: widget.isUpgrade ? '升级成功，套餐已刷新' : '支付成功，套餐已刷新',
+      ));
+    }
   }
 
   Future<void> checkPaymentStatus() async {
@@ -4080,6 +4093,442 @@ class _CheckoutResultBox extends StatelessWidget {
                     fontSize: 12,
                     fontWeight: FontWeight.w700)),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> showCheckoutQrDialog({
+  required BuildContext context,
+  required AppController controller,
+  required CheckoutQrPayload payload,
+  required String? tradeNo,
+  required String successMessage,
+}) {
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    builder: (_) => _CheckoutQrDialog(
+      controller: controller,
+      payload: payload,
+      tradeNo: tradeNo,
+      successMessage: successMessage,
+    ),
+  );
+}
+
+class _CheckoutQrDialog extends StatefulWidget {
+  const _CheckoutQrDialog({
+    required this.controller,
+    required this.payload,
+    required this.tradeNo,
+    required this.successMessage,
+  });
+
+  final AppController controller;
+  final CheckoutQrPayload payload;
+  final String? tradeNo;
+  final String successMessage;
+
+  @override
+  State<_CheckoutQrDialog> createState() => _CheckoutQrDialogState();
+}
+
+class _CheckoutQrDialogState extends State<_CheckoutQrDialog> {
+  bool checking = false;
+  String? statusText;
+
+  Future<void> copyText(String value, String label) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('$label已复制')));
+  }
+
+  Future<void> openPaymentUrl() async {
+    final url = widget.payload.paymentUrl;
+    if (url == null || url.isEmpty) {
+      return;
+    }
+    final opened = await openExternalUrl(url);
+    if (!mounted) {
+      return;
+    }
+    if (!opened) {
+      await Clipboard.setData(ClipboardData(text: url));
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('支付链接打开失败，已复制')));
+    }
+  }
+
+  Future<void> checkStatus() async {
+    final tradeNo = widget.tradeNo;
+    if (tradeNo == null || tradeNo.isEmpty || checking) {
+      return;
+    }
+    setState(() {
+      checking = true;
+      statusText = null;
+    });
+    try {
+      final status = await widget.controller.checkStoreOrder(tradeNo);
+      if (!mounted) {
+        return;
+      }
+      if (status == 3) {
+        await widget.controller.bootstrap();
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(widget.successMessage)));
+        Navigator.pop(context);
+      } else {
+        setState(() => statusText = '订单尚未完成支付，当前状态码：$status');
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => statusText = '查询失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() => checking = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = widget.payload;
+    final expiry = qrExpiryText(payload.expirationTime);
+    final amountText = qrAmountText(payload);
+    final primaryCopy =
+        payload.address?.isNotEmpty == true ? payload.address! : payload.qrData;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: Colors.white,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: keliBlueSoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.qr_code_2_rounded,
+                              color: keliBlueStrong, size: 21),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('扫码支付',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900)),
+                              SizedBox(height: 2),
+                              Text('使用对应钱包扫码或复制地址完成付款',
+                                  style: TextStyle(
+                                      color: keliMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: keliLine),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 18,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: QrImageView(
+                          data: payload.qrData,
+                          version: QrVersions.auto,
+                          size: 220,
+                          gapless: true,
+                          backgroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                    if (payload.network != null ||
+                        payload.currency != null ||
+                        expiry != null) ...[
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final tiles = <Widget>[
+                            if (payload.network != null)
+                              _QrMetaTile(label: '网络', value: payload.network!),
+                            if (payload.currency != null)
+                              _QrMetaTile(
+                                  label: '币种', value: payload.currency!),
+                            if (expiry != null)
+                              _QrMetaTile(label: '有效期', value: expiry),
+                          ];
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final tile in tiles)
+                                SizedBox(
+                                  width: constraints.maxWidth >= 420
+                                      ? (constraints.maxWidth - 16) / 3
+                                      : constraints.maxWidth,
+                                  child: tile,
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                    if (amountText != null) ...[
+                      const SizedBox(height: 12),
+                      _QrInfoRow(
+                        label: '支付金额',
+                        value: amountText,
+                        onCopy: () => copyText(amountText, '支付金额'),
+                      ),
+                    ],
+                    if (payload.address != null &&
+                        payload.address!.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      _QrInfoRow(
+                        label: '收款地址',
+                        value: payload.address!,
+                        dense: true,
+                        onCopy: () => copyText(payload.address!, '收款地址'),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 10),
+                      _QrInfoRow(
+                        label: '支付内容',
+                        value: payload.qrData,
+                        dense: true,
+                        onCopy: () => copyText(payload.qrData, '支付内容'),
+                      ),
+                    ],
+                    if (payload.paymentUrl != null &&
+                        payload.paymentUrl!.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      const _CheckoutInfoBox(
+                        icon: Icons.info_outline,
+                        title: '移动端支付',
+                        message: '也可以打开支付链接，在手机钱包或浏览器中继续完成支付。',
+                      ),
+                    ],
+                    if (statusText != null) ...[
+                      const SizedBox(height: 10),
+                      _CheckoutInfoBox(
+                        icon: Icons.fact_check_outlined,
+                        title: '支付状态',
+                        message: statusText!,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final closeButton = OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('关闭'),
+                        );
+                        final copyButton = OutlinedButton.icon(
+                          onPressed: () => copyText(primaryCopy, '支付信息'),
+                          icon: const Icon(Icons.copy_rounded, size: 17),
+                          label: const Text('复制'),
+                        );
+                        final openButton = payload.paymentUrl != null &&
+                                payload.paymentUrl!.isNotEmpty
+                            ? OutlinedButton.icon(
+                                onPressed: openPaymentUrl,
+                                icon: const Icon(Icons.open_in_new_rounded,
+                                    size: 17),
+                                label: const Text('打开链接'),
+                              )
+                            : null;
+                        final paidButton = FilledButton.icon(
+                          onPressed: widget.tradeNo == null || checking
+                              ? null
+                              : checkStatus,
+                          icon: checking
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.check_circle_outline,
+                                  size: 17),
+                          label: Text(checking ? '查询中' : '我已支付'),
+                        );
+
+                        if (constraints.maxWidth < 430) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              paidButton,
+                              const SizedBox(height: 8),
+                              if (openButton != null) ...[
+                                openButton,
+                                const SizedBox(height: 8),
+                              ],
+                              copyButton,
+                              const SizedBox(height: 8),
+                              closeButton,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(child: closeButton),
+                            const SizedBox(width: 10),
+                            Expanded(child: copyButton),
+                            if (openButton != null) ...[
+                              const SizedBox(width: 10),
+                              Expanded(child: openButton),
+                            ],
+                            const SizedBox(width: 10),
+                            Expanded(flex: 2, child: paidButton),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QrMetaTile extends StatelessWidget {
+  const _QrMetaTile({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: keliMuted, fontSize: 11, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 3),
+          Text(value,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _QrInfoRow extends StatelessWidget {
+  const _QrInfoRow({
+    required this.label,
+    required this.value,
+    required this.onCopy,
+    this.dense = false,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onCopy;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: dense ? 10 : 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        color: keliMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                SelectableText(value,
+                    style: TextStyle(
+                        color: keliInk,
+                        fontSize: dense ? 12 : 14,
+                        fontWeight: dense ? FontWeight.w700 : FontWeight.w900)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            onPressed: onCopy,
+            icon: const Icon(Icons.copy_rounded, size: 15),
+            label: const Text('复制'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(74, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+          ),
         ],
       ),
     );
@@ -5160,6 +5609,15 @@ Future<void> handlePlanPurchase(
       await Clipboard.setData(ClipboardData(text: result.externalUrl!));
     }
   }
+  if (result.qrPayload != null && context.mounted) {
+    unawaited(showCheckoutQrDialog(
+      context: context,
+      controller: controller,
+      payload: result.qrPayload!,
+      tradeNo: result.tradeNo,
+      successMessage: '支付成功，套餐已刷新',
+    ));
+  }
   if (context.mounted) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(result.message)));
@@ -5177,19 +5635,71 @@ String priceText(int cents) {
 Future<bool> openExternalUrl(String url) async {
   try {
     if (Platform.isWindows) {
-      await Process.run('cmd', ['/c', 'start', '', url]);
-      return true;
+      final result = await Process.run(
+          'rundll32.exe', ['url.dll,FileProtocolHandler', url]);
+      if (result.exitCode == 0) {
+        return true;
+      }
+      final fallback = await Process.run('explorer.exe', [url]);
+      return fallback.exitCode == 0;
     } else if (Platform.isMacOS) {
-      await Process.run('open', [url]);
-      return true;
+      final result = await Process.run('open', [url]);
+      return result.exitCode == 0;
     } else if (Platform.isLinux) {
-      await Process.run('xdg-open', [url]);
-      return true;
+      final result = await Process.run('xdg-open', [url]);
+      return result.exitCode == 0;
     }
   } catch (_) {
     return false;
   }
   return false;
+}
+
+String? qrAmountText(CheckoutQrPayload payload) {
+  final amount = payload.amount;
+  final currency = payload.currency;
+  final fiatAmount = payload.fiatAmount;
+  final fiat = payload.fiat;
+  if (amount == null || amount.isEmpty) {
+    if (fiatAmount == null || fiatAmount.isEmpty) {
+      return null;
+    }
+    return fiat == null || fiat.isEmpty ? fiatAmount : '$fiatAmount $fiat';
+  }
+  final primary =
+      currency == null || currency.isEmpty ? amount : '$amount $currency';
+  if (fiatAmount == null || fiatAmount.isEmpty) {
+    return primary;
+  }
+  final fiatText =
+      fiat == null || fiat.isEmpty ? fiatAmount : '$fiatAmount $fiat';
+  return '$primary  ≈ $fiatText';
+}
+
+String? qrExpiryText(int? value) {
+  if (value == null || value <= 0) {
+    return null;
+  }
+  final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  final seconds = value > 10000000000
+      ? value ~/ 1000 - nowSeconds
+      : value > 1000000000
+          ? value - nowSeconds
+          : value;
+  if (seconds <= 0) {
+    return '即将过期';
+  }
+  final minutes = seconds ~/ 60;
+  final restSeconds = seconds % 60;
+  if (minutes <= 0) {
+    return '$restSeconds 秒';
+  }
+  if (minutes < 60) {
+    return '$minutes 分钟';
+  }
+  final hours = minutes ~/ 60;
+  final restMinutes = minutes % 60;
+  return restMinutes == 0 ? '$hours 小时' : '$hours 小时 $restMinutes 分钟';
 }
 
 Color latencyStatusColor(int? latencyMs) {

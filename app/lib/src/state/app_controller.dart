@@ -459,6 +459,15 @@ class AppController extends ChangeNotifier {
           message: externalMessage, tradeNo: tradeNo, externalUrl: externalUrl);
     }
 
+    final qrPayload = checkoutQrPayload(data);
+    if (checkout.type == 0 && qrPayload != null) {
+      return PurchaseResult(
+        message: '订单已创建，请扫码支付',
+        tradeNo: tradeNo,
+        qrPayload: qrPayload,
+      );
+    }
+
     final paymentText = checkoutDataText(data);
     if (checkout.type == 0 && paymentText.isNotEmpty) {
       return PurchaseResult(
@@ -646,6 +655,38 @@ String? checkoutExternalUrl(Object? data) {
   return null;
 }
 
+CheckoutQrPayload? checkoutQrPayload(Object? data) {
+  if (data is String) {
+    final value = data.trim();
+    return value.isEmpty ? null : CheckoutQrPayload(qrData: value);
+  }
+  if (data is! Map) {
+    return null;
+  }
+
+  final qrData = _readString(
+    data,
+    ['qr_data', 'qrData', 'address', 'token', 'payment_url', 'paymentUrl'],
+  );
+  if (qrData == null) {
+    return null;
+  }
+
+  return CheckoutQrPayload(
+    qrData: qrData,
+    address: _readString(data, ['address', 'token']),
+    amount: _readString(data, ['amount', 'actual_amount']),
+    fiatAmount: _readString(data, ['fiat_amount', 'fiatAmount']),
+    fiat: _readString(data, ['fiat']),
+    currency: _readString(data, ['currency']),
+    network: _readString(data, ['network']),
+    tradeType: _readString(data, ['trade_type', 'tradeType']),
+    tradeId: _readString(data, ['trade_id', 'tradeId']),
+    paymentUrl: _readString(data, ['payment_url', 'paymentUrl']),
+    expirationTime: _readInt(data, ['expiration_time', 'expirationTime']),
+  );
+}
+
 String checkoutDataText(Object? data) {
   if (data == null) {
     return '';
@@ -659,9 +700,16 @@ String checkoutDataText(Object? data) {
       'payment_url',
       'qr_data',
       'address',
+      'token',
       'amount',
+      'actual_amount',
+      'fiat_amount',
+      'fiat',
       'currency',
       'network',
+      'trade_type',
+      'trade_id',
+      'expiration_time',
       'trade_no',
     ]) {
       final value = data[key];
@@ -675,6 +723,38 @@ String checkoutDataText(Object? data) {
     return data.toString();
   }
   return '$data';
+}
+
+String? _readString(Map data, List<String> keys) {
+  for (final key in keys) {
+    final value = data[key];
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+    if (value is num && value.isFinite) {
+      return '$value';
+    }
+  }
+  return null;
+}
+
+int? _readInt(Map data, List<String> keys) {
+  for (final key in keys) {
+    final value = data[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num && value.isFinite) {
+      return value.round();
+    }
+    if (value is String && value.trim().isNotEmpty) {
+      final parsed = num.tryParse(value.trim());
+      if (parsed != null && parsed.isFinite) {
+        return parsed.round();
+      }
+    }
+  }
+  return null;
 }
 
 bool _discountUpgradeEnabled(Map<String, Object?> config) {

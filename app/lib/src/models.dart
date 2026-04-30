@@ -224,6 +224,34 @@ class CheckoutResult {
   final Object? data;
 }
 
+class CheckoutQrPayload {
+  const CheckoutQrPayload({
+    required this.qrData,
+    this.address,
+    this.amount,
+    this.fiatAmount,
+    this.fiat,
+    this.currency,
+    this.network,
+    this.tradeType,
+    this.tradeId,
+    this.paymentUrl,
+    this.expirationTime,
+  });
+
+  final String qrData;
+  final String? address;
+  final String? amount;
+  final String? fiatAmount;
+  final String? fiat;
+  final String? currency;
+  final String? network;
+  final String? tradeType;
+  final String? tradeId;
+  final String? paymentUrl;
+  final int? expirationTime;
+}
+
 class UpgradePreview {
   const UpgradePreview({
     required this.allowUpgrade,
@@ -252,12 +280,14 @@ class PurchaseResult {
     this.tradeNo,
     this.externalUrl,
     this.copyText,
+    this.qrPayload,
   });
 
   final String message;
   final String? tradeNo;
   final String? externalUrl;
   final String? copyText;
+  final CheckoutQrPayload? qrPayload;
 }
 
 class ProxyNode {
