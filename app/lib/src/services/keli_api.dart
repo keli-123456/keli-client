@@ -20,9 +20,20 @@ abstract interface class KeliApi {
 
   Future<List<PaymentMethod>> fetchPaymentMethods();
 
+  Future<Map<String, Object?>> fetchUserConfig();
+
   Future<String> createOrder({
     required int planId,
     required String period,
+  });
+
+  Future<UpgradePreview> previewUpgrade({
+    required int targetPlanId,
+    required String period,
+  });
+
+  Future<String> confirmUpgrade({
+    required String quoteToken,
   });
 
   Future<CheckoutResult> checkoutOrder({
@@ -159,6 +170,16 @@ class RealKeliApi implements KeliApi {
   }
 
   @override
+  Future<Map<String, Object?>> fetchUserConfig() async {
+    final body = await _requestWithSession('GET', '/user/comm/config');
+    final payload = _extractPayload(body);
+    if (payload is Map) {
+      return Map<String, Object?>.from(payload);
+    }
+    return <String, Object?>{};
+  }
+
+  @override
   Future<String> createOrder({
     required int planId,
     required String period,
@@ -172,9 +193,46 @@ class RealKeliApi implements KeliApi {
       },
     );
     final payload = _extractPayload(body);
-    final tradeNo = _stringValue(payload);
+    final tradeNo = _tradeNoFromPayload(payload);
     if (tradeNo == null || tradeNo.isEmpty) {
       throw ApiException('订单创建成功但缺少 trade_no');
+    }
+    return tradeNo;
+  }
+
+  @override
+  Future<UpgradePreview> previewUpgrade({
+    required int targetPlanId,
+    required String period,
+  }) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/order/upgrade/preview',
+      body: <String, Object?>{
+        'target_plan_id': targetPlanId,
+        'period': period,
+      },
+    );
+    final payload = _extractPayload(body);
+    if (payload is! Map) {
+      throw ApiException('升级预览响应格式错误');
+    }
+    return _parseUpgradePreview(Map<String, Object?>.from(payload));
+  }
+
+  @override
+  Future<String> confirmUpgrade({
+    required String quoteToken,
+  }) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/order/upgrade/confirm',
+      body: <String, Object?>{'quote_token': quoteToken},
+    );
+    final payload = _extractPayload(body);
+    final tradeNo = _tradeNoFromPayload(payload);
+    if (tradeNo == null || tradeNo.isEmpty) {
+      throw ApiException('升级订单创建成功但缺少 trade_no');
     }
     return tradeNo;
   }
@@ -192,6 +250,14 @@ class RealKeliApi implements KeliApi {
         'method': method,
       },
     );
+    final payload = _extractPayload(body);
+    if (payload is Map) {
+      final map = Map<String, Object?>.from(payload);
+      return CheckoutResult(
+        type: _intValue(map['type']) ?? _intValue(body['type']) ?? 0,
+        data: map.containsKey('data') ? map['data'] : body['data'],
+      );
+    }
     return CheckoutResult(
       type: _intValue(body['type']) ?? 0,
       data: body['data'],
@@ -336,12 +402,18 @@ class RealKeliApi implements KeliApi {
     final upload = _numValue(subscribe['u']) ?? 0;
     final download = _numValue(subscribe['d']) ?? 0;
     final total = _numValue(subscribe['transfer_enable']) ?? 0;
-    final expiredAt = _intValue(subscribe['expired_at']);
+    final expiredAt =
+        _intValue(subscribe['expired_at']) ?? _intValue(user['expired_at']);
     return AppProfile(
       email: _stringValue(user['email']) ??
           _stringValue(subscribe['email']) ??
           '未登录',
       planName: _stringValue(plan['name']) ?? '未订阅',
+      planId: _intValue(subscribe['plan_id']) ??
+          _intValue(user['plan_id']) ??
+          _intValue(plan['id']) ??
+          0,
+      upgradeTargetPlanIds: _intList(plan['upgrade_to_plan_ids']),
       expireAt: expiredAt == null || expiredAt <= 0
           ? DateTime(2099, 12, 31)
           : DateTime.fromMillisecondsSinceEpoch(expiredAt * 1000),
@@ -441,6 +513,32 @@ class RealKeliApi implements KeliApi {
       id: _stringValue(raw['id']) ?? '',
       name: _stringValue(raw['name']) ?? _stringValue(raw['payment']) ?? '支付方式',
       payment: _stringValue(raw['payment']) ?? '',
+    );
+  }
+
+  UpgradePreview _parseUpgradePreview(Map<String, Object?> raw) {
+    final pricing = raw['pricing_detail'] is Map
+        ? Map<String, Object?>.from(raw['pricing_detail'] as Map)
+        : <String, Object?>{};
+    final sourcePlan = raw['source_plan'] is Map
+        ? Map<String, Object?>.from(raw['source_plan'] as Map)
+        : <String, Object?>{};
+    final targetPlan = raw['target_plan'] is Map
+        ? Map<String, Object?>.from(raw['target_plan'] as Map)
+        : <String, Object?>{};
+    return UpgradePreview(
+      allowUpgrade: _boolValue(raw['allow_upgrade'] ?? raw['allowUpgrade']),
+      reason: _stringValue(raw['reason']),
+      quoteToken: _stringValue(raw['quote_token'] ?? raw['quoteToken']),
+      payableAmountCents: _intValue(raw['payable_amount'] ??
+          raw['quoted_payable_amount'] ??
+          pricing['final_pay_amount']),
+      targetPriceCents:
+          _intValue(pricing['target_price'] ?? raw['target_price']),
+      upgradeCreditAmountCents: _intValue(
+          pricing['upgrade_credit_amount'] ?? raw['upgrade_credit_amount']),
+      sourcePlanName: _stringValue(sourcePlan['name']),
+      targetPlanName: _stringValue(targetPlan['name']),
     );
   }
 
@@ -631,6 +729,51 @@ class RealKeliApi implements KeliApi {
 
   int? _intValue(Object? value) => _numValue(value)?.toInt();
 
+  String? _tradeNoFromPayload(Object? payload) {
+    if (payload is Map) {
+      for (final key in ['trade_no', 'tradeNo', 'tradeNoStr']) {
+        final value = _stringValue(payload[key]);
+        if (value != null && value.trim().isNotEmpty) {
+          return value.trim();
+        }
+      }
+      final nested = payload['data'];
+      if (nested != null && nested != payload) {
+        return _tradeNoFromPayload(nested);
+      }
+      return null;
+    }
+    final value = _stringValue(payload);
+    return value == null || value.trim().isEmpty ? null : value.trim();
+  }
+
+  List<int> _intList(Object? value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) {
+        return const [];
+      }
+      try {
+        return _intList(jsonDecode(trimmed));
+      } catch (_) {
+        return trimmed
+            .split(',')
+            .map((item) => int.tryParse(item.trim()) ?? 0)
+            .where((item) => item > 0)
+            .toSet()
+            .toList();
+      }
+    }
+    if (value is List) {
+      return value
+          .map((item) => _intValue(item) ?? 0)
+          .where((item) => item > 0)
+          .toSet()
+          .toList();
+    }
+    return const [];
+  }
+
   bool _boolValue(Object? value) {
     if (value is bool) {
       return value;
@@ -681,7 +824,9 @@ class MockKeliApi implements KeliApi {
     return BootstrapPayload(
       profile: AppProfile(
         email: 'user@996cloud.huhu.icu',
-        planName: '旗舰套餐',
+        planName: '标准套餐',
+        planId: 1,
+        upgradeTargetPlanIds: [2],
         expireAt: DateTime(2026, 6, 30, 23, 59, 59),
         usedTrafficGb: 321.6,
         totalTrafficGb: 1024,
@@ -749,6 +894,15 @@ class MockKeliApi implements KeliApi {
   }
 
   @override
+  Future<Map<String, Object?>> fetchUserConfig() async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    return <String, Object?>{
+      'upgrade_v2_enable': true,
+      'plan_change_enable': true,
+    };
+  }
+
+  @override
   Future<List<PaymentMethod>> fetchPaymentMethods() async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     return const [
@@ -764,6 +918,31 @@ class MockKeliApi implements KeliApi {
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 260));
     return 'MOCK${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  @override
+  Future<UpgradePreview> previewUpgrade({
+    required int targetPlanId,
+    required String period,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 240));
+    return const UpgradePreview(
+      allowUpgrade: true,
+      quoteToken: 'mock-upgrade-quote-token',
+      payableAmountCents: 1200,
+      targetPriceCents: 2200,
+      upgradeCreditAmountCents: 1000,
+      sourcePlanName: '标准套餐',
+      targetPlanName: '旗舰套餐',
+    );
+  }
+
+  @override
+  Future<String> confirmUpgrade({
+    required String quoteToken,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    return 'UPG${DateTime.now().millisecondsSinceEpoch}';
   }
 
   @override

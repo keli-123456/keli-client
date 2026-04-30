@@ -75,6 +75,8 @@ class AppProfile {
     required this.usedTrafficGb,
     required this.totalTrafficGb,
     required this.resetDay,
+    this.planId = 0,
+    this.upgradeTargetPlanIds = const [],
   });
 
   final String email;
@@ -83,12 +85,17 @@ class AppProfile {
   final double usedTrafficGb;
   final double totalTrafficGb;
   final int resetDay;
+  final int planId;
+  final List<int> upgradeTargetPlanIds;
 
   double get remainingTrafficGb =>
       (totalTrafficGb - usedTrafficGb).clamp(0, totalTrafficGb).toDouble();
   double get usageRatio => totalTrafficGb <= 0
       ? 0
       : (usedTrafficGb / totalTrafficGb).clamp(0, 1).toDouble();
+  bool get hasActiveSubscription =>
+      (planId > 0 || planName.trim().isNotEmpty && planName != '未订阅') &&
+      (expireAt.year >= 2099 || expireAt.isAfter(DateTime.now()));
 }
 
 class StorePlan {
@@ -123,6 +130,11 @@ class StorePlan {
         .where((item) => (prices[item.period] ?? 0) > 0)
         .map((item) => item.copyWith(priceCents: prices[item.period] ?? 0))
         .toList();
+  }
+
+  bool get hasRecurringOptions {
+    return periodOptions
+        .any((option) => recurringUpgradePeriodKeys.contains(option.period));
   }
 
   String get trafficLabel {
@@ -161,6 +173,15 @@ class PlanPeriodOption {
     );
   }
 }
+
+const recurringUpgradePeriodKeys = <String>{
+  'month_price',
+  'quarter_price',
+  'half_year_price',
+  'year_price',
+  'two_year_price',
+  'three_year_price',
+};
 
 const planPeriodDefinitions = <PlanPeriodOption>[
   PlanPeriodOption(
@@ -201,6 +222,28 @@ class CheckoutResult {
 
   final int type;
   final Object? data;
+}
+
+class UpgradePreview {
+  const UpgradePreview({
+    required this.allowUpgrade,
+    this.reason,
+    this.quoteToken,
+    this.payableAmountCents,
+    this.targetPriceCents,
+    this.upgradeCreditAmountCents,
+    this.sourcePlanName,
+    this.targetPlanName,
+  });
+
+  final bool allowUpgrade;
+  final String? reason;
+  final String? quoteToken;
+  final int? payableAmountCents;
+  final int? targetPriceCents;
+  final int? upgradeCreditAmountCents;
+  final String? sourcePlanName;
+  final String? targetPlanName;
 }
 
 class PurchaseResult {

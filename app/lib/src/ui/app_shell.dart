@@ -2064,6 +2064,11 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
         .where((plan) =>
             !isTrafficPackPlan(plan) && recurringOptions(plan).isNotEmpty)
         .toList();
+    final upgradePlans =
+        recurringPlans.where(controller.isUpgradeTarget).toList();
+    final hasUpgradeTargets = upgradePlans.isNotEmpty;
+    final displayedRecurringPlans =
+        upgradeOnly && hasUpgradeTargets ? upgradePlans : recurringPlans;
     final trafficPlans = controller.storePlans
         .where((plan) =>
             isTrafficPackPlan(plan) && trafficOptions(plan).isNotEmpty)
@@ -2090,21 +2095,26 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
       );
     }
 
-    final selectedPlan = selectedRecurringPlan(recurringPlans, selectedPlanId);
+    final selectedPlan =
+        selectedRecurringPlan(displayedRecurringPlans, selectedPlanId);
     final selectedTrafficPlan =
         selectedStorePlan(trafficPlans, selectedTrafficPlanId);
+    final selectedIsUpgrade =
+        selectedPlan != null && controller.isUpgradeTarget(selectedPlan);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _StoreSelectionPanel(
+          controller: controller,
           tab: tab,
           onTabChanged: (value) => setState(() => tab = value),
-          recurringPlans: recurringPlans,
+          recurringPlans: displayedRecurringPlans,
           trafficPlans: trafficPlans,
           selectedPlan: selectedPlan,
           selectedTrafficPlan: selectedTrafficPlan,
           upgradeOnly: upgradeOnly,
+          hasUpgradeTargets: hasUpgradeTargets,
           onUpgradeOnlyChanged: (value) => setState(() => upgradeOnly = value),
           onSelectPlan: (id) => setState(() => selectedPlanId = id),
           onSelectTrafficPlan: (id) =>
@@ -2115,12 +2125,15 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
           _StorePeriodPanel(
             title: selectedPlan == null
                 ? '包月套餐 - 请选择购买周期'
-                : '${selectedPlan.name} - 请选择购买周期',
+                : selectedIsUpgrade
+                    ? '${selectedPlan.name} - 请选择升级周期'
+                    : '${selectedPlan.name} - 请选择购买周期',
             plan: selectedPlan,
             options: selectedPlan == null
                 ? const []
                 : recurringOptions(selectedPlan),
             controller: controller,
+            isUpgrade: selectedIsUpgrade,
           )
         else if (tab == _StoreTab.traffic)
           _StorePeriodPanel(
@@ -2143,6 +2156,7 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
 
 class _StoreSelectionPanel extends StatelessWidget {
   const _StoreSelectionPanel({
+    required this.controller,
     required this.tab,
     required this.onTabChanged,
     required this.recurringPlans,
@@ -2150,11 +2164,13 @@ class _StoreSelectionPanel extends StatelessWidget {
     required this.selectedPlan,
     required this.selectedTrafficPlan,
     required this.upgradeOnly,
+    required this.hasUpgradeTargets,
     required this.onUpgradeOnlyChanged,
     required this.onSelectPlan,
     required this.onSelectTrafficPlan,
   });
 
+  final AppController controller;
   final _StoreTab tab;
   final ValueChanged<_StoreTab> onTabChanged;
   final List<StorePlan> recurringPlans;
@@ -2162,6 +2178,7 @@ class _StoreSelectionPanel extends StatelessWidget {
   final StorePlan? selectedPlan;
   final StorePlan? selectedTrafficPlan;
   final bool upgradeOnly;
+  final bool hasUpgradeTargets;
   final ValueChanged<bool> onUpgradeOnlyChanged;
   final ValueChanged<int> onSelectPlan;
   final ValueChanged<int> onSelectTrafficPlan;
@@ -2179,9 +2196,11 @@ class _StoreSelectionPanel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(22, 16, 22, 20),
             child: switch (tab) {
               _StoreTab.plans => _MonthlyPlanSelection(
+                  controller: controller,
                   plans: recurringPlans,
                   selectedPlan: selectedPlan,
                   upgradeOnly: upgradeOnly,
+                  hasUpgradeTargets: hasUpgradeTargets,
                   onUpgradeOnlyChanged: onUpgradeOnlyChanged,
                   onSelectPlan: onSelectPlan,
                 ),
@@ -2290,16 +2309,20 @@ class _StoreTabButton extends StatelessWidget {
 
 class _MonthlyPlanSelection extends StatelessWidget {
   const _MonthlyPlanSelection({
+    required this.controller,
     required this.plans,
     required this.selectedPlan,
     required this.upgradeOnly,
+    required this.hasUpgradeTargets,
     required this.onUpgradeOnlyChanged,
     required this.onSelectPlan,
   });
 
+  final AppController controller;
   final List<StorePlan> plans;
   final StorePlan? selectedPlan;
   final bool upgradeOnly;
+  final bool hasUpgradeTargets;
   final ValueChanged<bool> onUpgradeOnlyChanged;
   final ValueChanged<int> onSelectPlan;
 
@@ -2312,6 +2335,8 @@ class _MonthlyPlanSelection extends StatelessWidget {
         const SizedBox(height: 18),
         _UpgradeRuleBanner(
           upgradeOnly: upgradeOnly,
+          hasUpgradeTargets: hasUpgradeTargets,
+          currentPlanName: controller.profile?.planName ?? '',
           onUpgradeOnlyChanged: onUpgradeOnlyChanged,
         ),
         const SizedBox(height: 22),
@@ -2325,7 +2350,7 @@ class _MonthlyPlanSelection extends StatelessWidget {
             plans: plans,
             selectedPlan: selectedPlan,
             onSelectPlan: onSelectPlan,
-            showUpgradeBadge: true,
+            showUpgradeBadge: controller.isUpgradeTarget,
           ),
       ],
     );
@@ -2365,7 +2390,7 @@ class _TrafficPlanSelection extends StatelessWidget {
             plans: plans,
             selectedPlan: selectedPlan,
             onSelectPlan: onSelectPlan,
-            showUpgradeBadge: false,
+            showUpgradeBadge: (_) => false,
           ),
       ],
     );
@@ -2428,10 +2453,14 @@ class _StoreBullet extends StatelessWidget {
 class _UpgradeRuleBanner extends StatelessWidget {
   const _UpgradeRuleBanner({
     required this.upgradeOnly,
+    required this.hasUpgradeTargets,
+    required this.currentPlanName,
     required this.onUpgradeOnlyChanged,
   });
 
   final bool upgradeOnly;
+  final bool hasUpgradeTargets;
+  final String currentPlanName;
   final ValueChanged<bool> onUpgradeOnlyChanged;
 
   @override
@@ -2447,17 +2476,23 @@ class _UpgradeRuleBanner extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow = constraints.maxWidth < 760;
+          final title =
+              hasUpgradeTargets ? '↔ 升级套餐 · 当前套餐支持补差价升级' : '↔ 升级套餐 · 当前暂无可升级目标';
+          final subtitle = hasUpgradeTargets
+              ? '当前套餐：${currentPlanName.isEmpty ? '未识别' : currentPlanName}，确认后立即覆盖生效。'
+              : '可购买普通套餐；若需要升级，请确认面板套餐白名单和升级开关。';
           final text = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
+            children: [
               Text(
-                '↔ 升级套餐 · 当前套餐支持补差价升级',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+                title,
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
               ),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
-                '仅白名单目标套餐支持升级，确认后立即覆盖生效。',
-                style: TextStyle(
+                subtitle,
+                style: const TextStyle(
                     color: keliMuted,
                     fontSize: 12,
                     fontWeight: FontWeight.w700),
@@ -2471,7 +2506,8 @@ class _UpgradeRuleBanner extends StatelessWidget {
               _DarkTinyButton(
                 label: '只看可升级',
                 active: upgradeOnly,
-                onTap: () => onUpgradeOnlyChanged(true),
+                onTap:
+                    hasUpgradeTargets ? () => onUpgradeOnlyChanged(true) : null,
               ),
               _LightTinyButton(
                 label: '查看全部',
@@ -2512,7 +2548,7 @@ class _DarkTinyButton extends StatelessWidget {
 
   final String label;
   final bool active;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2586,7 +2622,7 @@ class _PlanChoiceWrap extends StatelessWidget {
   final List<StorePlan> plans;
   final StorePlan? selectedPlan;
   final ValueChanged<int> onSelectPlan;
-  final bool showUpgradeBadge;
+  final bool Function(StorePlan plan) showUpgradeBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -2598,9 +2634,7 @@ class _PlanChoiceWrap extends StatelessWidget {
           _PlanChoiceButton(
             plan: plan,
             selected: selectedPlan?.id == plan.id,
-            showUpgradeBadge: showUpgradeBadge &&
-                selectedPlan != null &&
-                plan.id != selectedPlan!.id,
+            showUpgradeBadge: showUpgradeBadge(plan),
             onTap: () => onSelectPlan(plan.id),
           ),
       ],
@@ -2699,6 +2733,7 @@ class _StorePeriodPanel extends StatelessWidget {
     required this.options,
     required this.controller,
     this.trafficMode = false,
+    this.isUpgrade = false,
   });
 
   final String title;
@@ -2706,6 +2741,7 @@ class _StorePeriodPanel extends StatelessWidget {
   final List<PlanPeriodOption> options;
   final AppController controller;
   final bool trafficMode;
+  final bool isUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -2741,6 +2777,7 @@ class _StorePeriodPanel extends StatelessWidget {
                 options: options,
                 controller: controller,
                 trafficMode: trafficMode,
+                isUpgrade: isUpgrade,
               ),
           ],
         ),
@@ -2755,12 +2792,14 @@ class _StorePriceGrid extends StatelessWidget {
     required this.options,
     required this.controller,
     required this.trafficMode,
+    required this.isUpgrade,
   });
 
   final StorePlan plan;
   final List<PlanPeriodOption> options;
   final AppController controller;
   final bool trafficMode;
+  final bool isUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -2784,6 +2823,7 @@ class _StorePriceGrid extends StatelessWidget {
                   option: option,
                   controller: controller,
                   trafficMode: trafficMode,
+                  isUpgrade: isUpgrade,
                 ),
               ),
           ],
@@ -2799,12 +2839,14 @@ class _StorePricingCard extends StatelessWidget {
     required this.option,
     required this.controller,
     required this.trafficMode,
+    required this.isUpgrade,
   });
 
   final StorePlan plan;
   final PlanPeriodOption option;
   final AppController controller;
   final bool trafficMode;
+  final bool isUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -2903,6 +2945,7 @@ class _StorePricingCard extends StatelessWidget {
                         controller,
                         plan,
                         option,
+                        isUpgrade: isUpgrade,
                       ),
               style: FilledButton.styleFrom(
                 backgroundColor: keliBlueStrong,
@@ -2910,7 +2953,11 @@ class _StorePricingCard extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(5)),
               ),
-              child: Text(controller.isPurchasing ? '处理中' : '立即购买'),
+              child: Text(controller.isPurchasing
+                  ? '处理中'
+                  : isUpgrade
+                      ? '升级购买'
+                      : '立即购买'),
             ),
           ),
         ],
@@ -2964,8 +3011,9 @@ Future<void> showCheckoutDialog(
   BuildContext context,
   AppController controller,
   StorePlan plan,
-  PlanPeriodOption option,
-) {
+  PlanPeriodOption option, {
+  bool isUpgrade = false,
+}) {
   return showDialog<void>(
     context: context,
     barrierDismissible: !controller.isPurchasing,
@@ -2973,6 +3021,7 @@ Future<void> showCheckoutDialog(
       controller: controller,
       plan: plan,
       option: option,
+      isUpgrade: isUpgrade,
     ),
   );
 }
@@ -2982,11 +3031,13 @@ class _CheckoutDialog extends StatefulWidget {
     required this.controller,
     required this.plan,
     required this.option,
+    required this.isUpgrade,
   });
 
   final AppController controller;
   final StorePlan plan;
   final PlanPeriodOption option;
+  final bool isUpgrade;
 
   @override
   State<_CheckoutDialog> createState() => _CheckoutDialogState();
@@ -2999,6 +3050,9 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
   PurchaseResult? result;
   String? resultDetail;
   bool resultIsError = false;
+  UpgradePreview? upgradePreview;
+  bool previewLoading = false;
+  String? previewError;
 
   @override
   void initState() {
@@ -3010,6 +3064,47 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
         : methods.isEmpty
             ? null
             : methods.first.id;
+    if (widget.isUpgrade) {
+      unawaited(loadUpgradePreview());
+    }
+  }
+
+  Future<UpgradePreview?> loadUpgradePreview() async {
+    if (previewLoading) {
+      return upgradePreview;
+    }
+    setState(() {
+      previewLoading = true;
+      previewError = null;
+    });
+    try {
+      final preview = await widget.controller.previewUpgrade(
+        widget.plan,
+        widget.option,
+      );
+      if (!mounted) {
+        return preview;
+      }
+      setState(() {
+        upgradePreview = preview;
+        previewError =
+            preview.allowUpgrade ? null : preview.reason ?? '当前套餐暂不可升级';
+      });
+      return preview;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        upgradePreview = null;
+        previewError = '$error';
+      });
+      return null;
+    } finally {
+      if (mounted) {
+        setState(() => previewLoading = false);
+      }
+    }
   }
 
   Future<void> submit() async {
@@ -3028,11 +3123,47 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       widget.controller.selectPaymentMethod(methodId);
     }
 
-    final purchase = await widget.controller.purchasePlan(
-      widget.plan,
-      widget.option,
-      paymentMethodId: methodId,
-    );
+    var preview = upgradePreview;
+    if (widget.isUpgrade) {
+      preview ??= await loadUpgradePreview();
+      if (preview == null || !preview.allowUpgrade) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          submitting = false;
+          result = PurchaseResult(
+              message: '购买失败: ${previewError ?? preview?.reason ?? '升级预览失败'}');
+          resultIsError = true;
+        });
+        return;
+      }
+      if (preview.quoteToken == null || preview.quoteToken!.trim().isEmpty) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          submitting = false;
+          result = const PurchaseResult(message: '购买失败: 升级预览缺少 quote_token');
+          resultIsError = true;
+        });
+        return;
+      }
+    }
+
+    final purchase = widget.isUpgrade
+        ? await widget.controller.purchaseUpgrade(
+            widget.plan,
+            widget.option,
+            quoteToken: preview!.quoteToken!,
+            paymentMethodId: methodId,
+            payableAmountCents: preview.payableAmountCents,
+          )
+        : await widget.controller.purchasePlan(
+            widget.plan,
+            widget.option,
+            paymentMethodId: methodId,
+          );
 
     var detail = '';
     if (purchase.copyText != null) {
@@ -3075,11 +3206,21 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
   @override
   Widget build(BuildContext context) {
     final methods = widget.controller.paymentMethods;
-    final canPay =
-        widget.option.priceCents <= 0 || methods.isEmpty || methodId != null;
-    final buttonText = methods.isEmpty && widget.option.priceCents > 0
-        ? '创建订单并复制订单号'
-        : '创建订单并支付';
+    final payableCents = widget.isUpgrade
+        ? upgradePreview?.payableAmountCents ?? widget.option.priceCents
+        : widget.option.priceCents;
+    final canPay = payableCents <= 0 || methods.isEmpty || methodId != null;
+    final upgradeBlocked = widget.isUpgrade &&
+        previewError != null &&
+        upgradePreview?.allowUpgrade != true;
+    final canSubmit = canPay && !previewLoading && !upgradeBlocked;
+    final buttonText = widget.isUpgrade
+        ? methods.isEmpty && payableCents > 0
+            ? '创建升级订单并复制订单号'
+            : '确认升级并支付'
+        : methods.isEmpty && payableCents > 0
+            ? '创建订单并复制订单号'
+            : '创建订单并支付';
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
@@ -3106,20 +3247,27 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                             color: keliBlueSoft,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(Icons.shopping_bag_outlined,
-                              color: keliBlueStrong, size: 20),
+                          child: Icon(
+                              widget.isUpgrade
+                                  ? Icons.upgrade_rounded
+                                  : Icons.shopping_bag_outlined,
+                              color: keliBlueStrong,
+                              size: 20),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('确认订单',
+                              Text(widget.isUpgrade ? '确认升级' : '确认订单',
                                   style: TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.w900)),
-                              SizedBox(height: 2),
-                              Text('核对套餐、选择支付方式后创建订单',
+                              const SizedBox(height: 2),
+                              Text(
+                                  widget.isUpgrade
+                                      ? '先预览补差价，再创建升级订单并支付'
+                                      : '核对套餐、选择支付方式后创建订单',
                                   style: TextStyle(
                                       color: keliMuted,
                                       fontSize: 12,
@@ -3141,6 +3289,14 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                       plan: widget.plan,
                       option: widget.option,
                     ),
+                    if (widget.isUpgrade) ...[
+                      const SizedBox(height: 12),
+                      _UpgradePreviewBox(
+                        preview: upgradePreview,
+                        loading: previewLoading,
+                        error: previewError,
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     const Text('支付方式',
                         style: TextStyle(
@@ -3198,7 +3354,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                               )
                             : null;
                         final submitButton = FilledButton.icon(
-                          onPressed: !canPay || submitting ? null : submit,
+                          onPressed: !canSubmit || submitting ? null : submit,
                           icon: submitting
                               ? const SizedBox(
                                   width: 16,
@@ -3207,7 +3363,11 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                                       strokeWidth: 2, color: Colors.white),
                                 )
                               : const Icon(Icons.payment_outlined, size: 17),
-                          label: Text(submitting ? '处理中' : buttonText),
+                          label: Text(previewLoading
+                              ? '正在预览'
+                              : submitting
+                                  ? '处理中'
+                                  : buttonText),
                         );
 
                         if (constraints.maxWidth < 430) {
@@ -3416,6 +3576,91 @@ class _CheckoutSummaryLine extends StatelessWidget {
           Text(value,
               style: const TextStyle(
                   color: keliInk, fontSize: 12, fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _UpgradePreviewBox extends StatelessWidget {
+  const _UpgradePreviewBox({
+    required this.preview,
+    required this.loading,
+    required this.error,
+  });
+
+  final UpgradePreview? preview;
+  final bool loading;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = preview;
+    if (loading && data == null) {
+      return const _CheckoutInfoBox(
+        icon: Icons.hourglass_empty_rounded,
+        title: '正在预览升级价格',
+        message: '客户端正在向面板确认补差价金额和升级资格。',
+      );
+    }
+    if (error != null && error!.isNotEmpty) {
+      return _CheckoutInfoBox(
+        icon: Icons.error_outline,
+        title: '升级不可用',
+        message: error!,
+      );
+    }
+    if (data == null) {
+      return const _CheckoutInfoBox(
+        icon: Icons.info_outline,
+        title: '升级预览',
+        message: '创建升级订单前会先向面板确认补差价金额。',
+      );
+    }
+
+    final payable = data.payableAmountCents;
+    final target = data.targetPriceCents;
+    final credit = data.upgradeCreditAmountCents;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.price_check_rounded,
+                  size: 18, color: keliBlueStrong),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${data.sourcePlanName ?? '当前套餐'} → ${data.targetPlanName ?? '目标套餐'}',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (target != null)
+            _CheckoutSummaryLine(label: '目标套餐价格', value: priceText(target)),
+          if (credit != null)
+            _CheckoutSummaryLine(label: '升级抵扣', value: '-${priceText(credit)}'),
+          if (payable != null)
+            _CheckoutSummaryLine(label: '本次应付', value: priceText(payable)),
+          if (data.reason != null && data.reason!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(data.reason!,
+                style: const TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ],
         ],
       ),
     );

@@ -32,6 +32,7 @@ class AppController extends ChangeNotifier {
   List<StorePlan> storePlans = const [];
   List<PaymentMethod> paymentMethods = const [];
   String? selectedPaymentMethodId;
+  bool discountUpgradeEnabled = false;
   List<ProxyNode> nodes = const [];
   int selectedNodeId = 49;
   int selectedPage = 0;
@@ -155,6 +156,7 @@ class AppController extends ChangeNotifier {
     storePlans = const [];
     paymentMethods = const [];
     selectedPaymentMethodId = null;
+    discountUpgradeEnabled = false;
     nodes = const [];
     selectedPage = 0;
     _log('INFO', '已退出登录');
@@ -189,6 +191,13 @@ class AppController extends ChangeNotifier {
     try {
       storePlans = await api.fetchPlans();
       try {
+        final config = await api.fetchUserConfig();
+        discountUpgradeEnabled = _discountUpgradeEnabled(config);
+      } catch (error) {
+        discountUpgradeEnabled = false;
+        _log('WARN', '升级配置加载失败: $error');
+      }
+      try {
         paymentMethods = await api.fetchPaymentMethods();
       } catch (error) {
         paymentMethods = const [];
@@ -209,6 +218,29 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  bool isUpgradeTarget(StorePlan plan) {
+    final current = profile;
+    return discountUpgradeEnabled &&
+        current != null &&
+        current.hasActiveSubscription &&
+        plan.id != current.planId &&
+        current.upgradeTargetPlanIds.contains(plan.id) &&
+        plan.hasRecurringOptions;
+  }
+
+  Future<UpgradePreview> previewUpgrade(
+    StorePlan plan,
+    PlanPeriodOption period,
+  ) async {
+    if (!isUpgradeTarget(plan)) {
+      throw const ApiException('当前套餐不支持补差价升级到此套餐');
+    }
+    if (!recurringUpgradePeriodKeys.contains(period.period)) {
+      throw const ApiException('升级只支持包月类周期');
+    }
+    return api.previewUpgrade(targetPlanId: plan.id, period: period.period);
+  }
+
   Future<PurchaseResult> purchasePlan(
     StorePlan plan,
     PlanPeriodOption period, {
@@ -224,49 +256,12 @@ class AppController extends ChangeNotifier {
       final tradeNo =
           await api.createOrder(planId: plan.id, period: period.period);
       _log('INFO', '订单已创建: $tradeNo');
-
-      PaymentMethod? selectedMethod;
-      final methodId = paymentMethodId ?? selectedPaymentMethodId;
-      for (final method in paymentMethods) {
-        if (method.id == methodId) {
-          selectedMethod = method;
-          break;
-        }
-      }
-      if (selectedMethod == null && period.priceCents > 0) {
-        return PurchaseResult(
-          message: '订单已创建，请复制订单号到面板支付',
-          tradeNo: tradeNo,
-          copyText: tradeNo,
-        );
-      }
-
-      final checkout = await api.checkoutOrder(
+      return _checkoutTradeNo(
         tradeNo: tradeNo,
-        method: selectedMethod?.id ?? '',
-      );
-
-      if (checkout.type == -1) {
-        await bootstrap();
-        return PurchaseResult(message: '购买成功，套餐已刷新', tradeNo: tradeNo);
-      }
-
-      final data = checkout.data;
-      if (checkout.type == 1 && data is String && data.isNotEmpty) {
-        return PurchaseResult(
-            message: '订单已创建，正在打开支付页面', tradeNo: tradeNo, externalUrl: data);
-      }
-
-      final paymentText = checkoutDataText(data);
-      if (checkout.type == 0 && paymentText.isNotEmpty) {
-        return PurchaseResult(
-            message: '订单已创建，支付信息已复制', tradeNo: tradeNo, copyText: paymentText);
-      }
-
-      return PurchaseResult(
-        message: '订单已创建，请复制订单号到面板支付',
-        tradeNo: tradeNo,
-        copyText: tradeNo,
+        period: period,
+        paymentMethodId: paymentMethodId,
+        successMessage: '购买成功，套餐已刷新',
+        externalMessage: '订单已创建，正在打开支付页面',
       );
     } catch (error) {
       storeError = '$error';
@@ -276,6 +271,98 @@ class AppController extends ChangeNotifier {
       isPurchasing = false;
       notifyListeners();
     }
+  }
+
+  Future<PurchaseResult> purchaseUpgrade(
+    StorePlan plan,
+    PlanPeriodOption period, {
+    required String quoteToken,
+    String? paymentMethodId,
+    int? payableAmountCents,
+  }) async {
+    if (isPurchasing) {
+      return const PurchaseResult(message: '正在处理上一个订单');
+    }
+    if (quoteToken.trim().isEmpty) {
+      return const PurchaseResult(message: '购买失败: 请先完成升级预览');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      final tradeNo = await api.confirmUpgrade(quoteToken: quoteToken);
+      _log('INFO', '升级订单已创建: $tradeNo');
+      return _checkoutTradeNo(
+        tradeNo: tradeNo,
+        period: period,
+        paymentMethodId: paymentMethodId,
+        payableAmountCents: payableAmountCents,
+        successMessage: '升级成功，套餐已刷新',
+        externalMessage: '升级订单已创建，正在打开支付页面',
+      );
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '升级购买失败: $error');
+      return PurchaseResult(message: '购买失败: $error');
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<PurchaseResult> _checkoutTradeNo({
+    required String tradeNo,
+    required PlanPeriodOption period,
+    required String? paymentMethodId,
+    required String successMessage,
+    required String externalMessage,
+    int? payableAmountCents,
+  }) async {
+    PaymentMethod? selectedMethod;
+    final methodId = paymentMethodId ?? selectedPaymentMethodId;
+    for (final method in paymentMethods) {
+      if (method.id == methodId) {
+        selectedMethod = method;
+        break;
+      }
+    }
+    final amountCents = payableAmountCents ?? period.priceCents;
+    if (selectedMethod == null && amountCents > 0) {
+      return PurchaseResult(
+        message: '订单已创建，请复制订单号到面板支付',
+        tradeNo: tradeNo,
+        copyText: tradeNo,
+      );
+    }
+
+    final checkout = await api.checkoutOrder(
+      tradeNo: tradeNo,
+      method: selectedMethod?.id ?? '',
+    );
+
+    if (checkout.type == -1) {
+      await bootstrap();
+      return PurchaseResult(message: successMessage, tradeNo: tradeNo);
+    }
+
+    final data = checkout.data;
+    final externalUrl = checkoutExternalUrl(data);
+    if (checkout.type == 1 && externalUrl != null) {
+      return PurchaseResult(
+          message: externalMessage, tradeNo: tradeNo, externalUrl: externalUrl);
+    }
+
+    final paymentText = checkoutDataText(data);
+    if (checkout.type == 0 && paymentText.isNotEmpty) {
+      return PurchaseResult(
+          message: '订单已创建，支付信息已复制', tradeNo: tradeNo, copyText: paymentText);
+    }
+
+    return PurchaseResult(
+      message: '订单已创建，请复制订单号到面板支付',
+      tradeNo: tradeNo,
+      copyText: tradeNo,
+    );
   }
 
   Future<void> selectNode(ProxyNode node) async {
@@ -425,6 +512,21 @@ class AppController extends ChangeNotifier {
   }
 }
 
+String? checkoutExternalUrl(Object? data) {
+  if (data is String && data.trim().isNotEmpty) {
+    return data.trim();
+  }
+  if (data is Map) {
+    for (final key in ['payment_url', 'paymentUrl', 'url', 'checkout_url']) {
+      final value = data[key];
+      if (value != null && '$value'.trim().isNotEmpty) {
+        return '$value'.trim();
+      }
+    }
+  }
+  return null;
+}
+
 String checkoutDataText(Object? data) {
   if (data == null) {
     return '';
@@ -454,6 +556,34 @@ String checkoutDataText(Object? data) {
     return data.toString();
   }
   return '$data';
+}
+
+bool _discountUpgradeEnabled(Map<String, Object?> config) {
+  return _featureFlag(config['upgrade_v2_enable']) &&
+      _featureFlag(config['plan_change_enable'], defaultValue: true);
+}
+
+bool _featureFlag(Object? value, {bool defaultValue = false}) {
+  if (value == null) {
+    return defaultValue;
+  }
+  if (value is bool) {
+    return value;
+  }
+  if (value is num) {
+    return value != 0;
+  }
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return defaultValue;
+    }
+    return normalized == '1' ||
+        normalized == 'true' ||
+        normalized == 'yes' ||
+        normalized == 'on';
+  }
+  return false;
 }
 
 extension ProxyModeLabel on ProxyMode {
