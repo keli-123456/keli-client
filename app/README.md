@@ -7,7 +7,7 @@ Initial app modules:
 - `auth`
 - `dashboard`
 - `nodes`
-- `subscription`
+- `store`
 - `settings`
 - `logs`
 - `shared/api`

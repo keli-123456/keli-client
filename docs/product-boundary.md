@@ -9,7 +9,7 @@ complexity.
 Primary jobs:
 
 - Let a user log in
-- Show subscription status
+- Show plan and store status
 - Show available nodes
 - Test latency
 - Connect and disconnect
@@ -77,4 +77,3 @@ changes to `kelinode`.
 
 Backend additions are allowed only when they simplify client behavior without
 breaking existing users or subscription clients.
-

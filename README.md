@@ -1,7 +1,7 @@
 # Keli Client
 
 Keli Client 是 Keli/Xboardpro 体系里的用户代理客户端项目。
-它不是节点端程序，也不是 `kelinode` 的替代品；它负责登录 `keliboard`、拉取订阅和节点、请求 sing-box 配置，并在本机启动代理核心。
+它不是节点端程序，也不是 `kelinode` 的替代品；它负责登录 `keliboard`、拉取套餐和节点、请求 sing-box 配置，并在本机启动代理核心。
 
 ## 当前状态
 
@@ -62,7 +62,7 @@ keli-client/
 
 - 邮箱密码登录
 - Token 安全保存
-- 用户和订阅信息加载
+- 用户套餐和节点信息加载
 - 节点列表
 - 延迟测试
 - 单节点连接和断开

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -61,7 +62,7 @@ class AppShell extends StatelessWidget {
               NavigationDestination(
                   icon: Icon(Icons.hub_outlined), label: '节点'),
               NavigationDestination(
-                  icon: Icon(Icons.pie_chart_outline), label: '订阅'),
+                  icon: Icon(Icons.storefront_outlined), label: '商店'),
               NavigationDestination(icon: Icon(Icons.tune), label: '设置'),
               NavigationDestination(
                   icon: Icon(Icons.receipt_long_outlined), label: '日志'),
@@ -266,7 +267,7 @@ class _PageBodyState extends State<_PageBody> {
     final child = switch (widget.page) {
       0 => HomeScreen(isDesktop: widget.isDesktop),
       1 => NodesScreen(isDesktop: widget.isDesktop),
-      2 => const SubscriptionScreen(),
+      2 => const StoreScreen(),
       3 => const SettingsScreen(),
       _ => const LogsScreen(),
     };
@@ -363,8 +364,8 @@ class _SideNavigation extends StatelessWidget {
                   selected: controller.selectedPage == 1),
               _NavItem(
                   index: 2,
-                  icon: Icons.assignment_outlined,
-                  label: '订阅',
+                  icon: Icons.storefront_outlined,
+                  label: '商店',
                   selected: controller.selectedPage == 2),
               _NavItem(
                   index: 3,
@@ -1987,24 +1988,25 @@ class _NodeTableHeader extends StatelessWidget {
   }
 }
 
-class SubscriptionScreen extends StatelessWidget {
-  const SubscriptionScreen({super.key});
+class StoreScreen extends StatelessWidget {
+  const StoreScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final profile = AppControllerScope.of(context).profile;
+    final controller = AppControllerScope.of(context);
+    final profile = controller.profile;
     final isDesktop = MediaQuery.sizeOf(context).width >= 900;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _PageHeader(
-          title: '订阅',
-          subtitle: '流量、到期和订阅地址',
+          title: '商店',
+          subtitle: '套餐、流量和续费',
           trailing: isDesktop
               ? OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: () => controller.bootstrap(),
                   icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('刷新'),
+                  label: const Text('刷新套餐'),
                 )
               : null,
         ),
@@ -2013,24 +2015,26 @@ class SubscriptionScreen extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                  flex: 5, child: _SubscriptionPlanPanel(profile: profile)),
+              Expanded(flex: 5, child: _CurrentPlanPanel(profile: profile)),
               const SizedBox(width: 12),
-              const Expanded(flex: 4, child: _SubscriptionLinksPanel()),
+              Expanded(
+                  flex: 4, child: _StoreActionsPanel(controller: controller)),
             ],
           )
         else ...[
-          _SubscriptionPlanPanel(profile: profile),
+          _CurrentPlanPanel(profile: profile),
           const SizedBox(height: 12),
-          const _SubscriptionLinksPanel(),
+          _StoreActionsPanel(controller: controller),
         ],
+        const SizedBox(height: 12),
+        _StoreFeatureGrid(controller: controller),
       ],
     );
   }
 }
 
-class _SubscriptionPlanPanel extends StatelessWidget {
-  const _SubscriptionPlanPanel({required this.profile});
+class _CurrentPlanPanel extends StatelessWidget {
+  const _CurrentPlanPanel({required this.profile});
 
   final AppProfile? profile;
 
@@ -2072,7 +2076,7 @@ class _SubscriptionPlanPanel extends StatelessWidget {
                   ],
                 ),
               ),
-              const _MiniBadge(text: '高级版', color: keliOrange),
+              const _MiniBadge(text: '当前套餐', color: keliOrange),
             ],
           ),
           const SizedBox(height: 18),
@@ -2119,8 +2123,10 @@ class _SubscriptionPlanPanel extends StatelessWidget {
   }
 }
 
-class _SubscriptionLinksPanel extends StatelessWidget {
-  const _SubscriptionLinksPanel();
+class _StoreActionsPanel extends StatelessWidget {
+  const _StoreActionsPanel({required this.controller});
+
+  final AppController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -2129,19 +2135,201 @@ class _SubscriptionLinksPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('订阅地址',
+          const Text('套餐中心',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
+          const Text('购买、升级和续费都在面板商店完成',
+              style: TextStyle(color: keliMuted, fontSize: 12)),
           const SizedBox(height: 12),
-          CopyRow(label: '普通订阅', value: 'https://sp.huhu.icu/s/********'),
-          const SizedBox(height: 10),
-          CopyRow(label: '加速订阅', value: 'https://sp.huhu.icu/s/********'),
+          _StoreActionRow(
+            icon: Icons.update_outlined,
+            title: '续费当前套餐',
+            subtitle: '保持现有节点和套餐权益',
+            onPressed: () => openStore(context, controller),
+          ),
+          const SizedBox(height: 8),
+          _StoreActionRow(
+            icon: Icons.upgrade_outlined,
+            title: '升级套餐',
+            subtitle: '按面板当前可售套餐为准',
+            onPressed: () => openStore(context, controller),
+          ),
+          const SizedBox(height: 8),
+          _StoreActionRow(
+            icon: Icons.add_chart_outlined,
+            title: '购买流量包',
+            subtitle: '适合临时补充可用流量',
+            onPressed: () => openStore(context, controller),
+          ),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('重置订阅链接'),
+            child: FilledButton.icon(
+              onPressed: () => openStore(context, controller),
+              icon: const Icon(Icons.storefront_outlined, size: 18),
+              label: const Text('打开面板商店'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreActionRow extends StatelessWidget {
+  const _StoreActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFFBFCFE),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: keliLineSoft),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: keliBlueSoft,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, size: 18, color: keliBlueStrong),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        style: const TextStyle(color: keliMuted, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: keliMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StoreFeatureGrid extends StatelessWidget {
+  const _StoreFeatureGrid({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      _StoreFeatureItem(
+        icon: Icons.workspace_premium_outlined,
+        title: '套餐权益',
+        value: controller.profile?.planName ?? '未订阅',
+        accent: keliOrange,
+      ),
+      _StoreFeatureItem(
+        icon: Icons.public_outlined,
+        title: '可用节点',
+        value: '${controller.nodes.length} 个',
+        accent: keliBlueStrong,
+      ),
+      _StoreFeatureItem(
+        icon: Icons.calendar_month_outlined,
+        title: '到期时间',
+        value: controller.profile == null
+            ? '-'
+            : dateText(controller.profile!.expireAt),
+        accent: keliGreen,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 760 ? 3 : 1;
+        final width = (constraints.maxWidth - (columns - 1) * 10) / columns;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final item in items)
+              SizedBox(width: width, child: _StoreFeatureCard(item: item)),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _StoreFeatureItem {
+  const _StoreFeatureItem({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.accent,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final Color accent;
+}
+
+class _StoreFeatureCard extends StatelessWidget {
+  const _StoreFeatureCard({required this.item});
+
+  final _StoreFeatureItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return KeliCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: item.accent.withValues(alpha: 0.11),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(item.icon, size: 20, color: item.accent),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.title,
+                    style: const TextStyle(color: keliMuted, fontSize: 12)),
+                const SizedBox(height: 4),
+                Text(item.value,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w900)),
+              ],
             ),
           ),
         ],
@@ -3037,6 +3225,50 @@ String latencyText(int? latencyMs) {
     return '未测';
   }
   return '${latencyMs}ms';
+}
+
+String storeUrl(AppController controller) {
+  final baseUrl = controller.session?.baseUrl ?? 'https://sp.huhu.icu';
+  return '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/#/store';
+}
+
+Future<void> copyStoreUrl(
+    BuildContext context, AppController controller) async {
+  await Clipboard.setData(ClipboardData(text: storeUrl(controller)));
+  if (context.mounted) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('商店地址已复制')));
+  }
+}
+
+Future<void> openStore(BuildContext context, AppController controller) async {
+  final url = storeUrl(controller);
+  var opened = false;
+
+  try {
+    if (Platform.isWindows) {
+      await Process.run('cmd', ['/c', 'start', '', url]);
+      opened = true;
+    } else if (Platform.isMacOS) {
+      await Process.run('open', [url]);
+      opened = true;
+    } else if (Platform.isLinux) {
+      await Process.run('xdg-open', [url]);
+      opened = true;
+    }
+  } catch (_) {
+    opened = false;
+  }
+
+  if (!opened) {
+    await Clipboard.setData(ClipboardData(text: url));
+  }
+
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(opened ? '正在打开面板商店' : '商店地址已复制，请在浏览器打开')),
+    );
+  }
 }
 
 Color latencyStatusColor(int? latencyMs) {

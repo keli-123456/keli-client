@@ -41,7 +41,7 @@ Expected modules:
 - Auth
 - Dashboard
 - Node list
-- Subscription
+- Store
 - Settings
 - Logs
 - Diagnostics
@@ -139,4 +139,3 @@ Errors should be user-readable and diagnosable:
 - Core start failure: include core stderr summary
 - TUN/VPN failure: show permission or driver problem
 - Network failure: show retry option and keep cached node list
-

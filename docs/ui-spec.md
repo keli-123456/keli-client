@@ -37,7 +37,7 @@ Primary sections:
 
 - Home
 - Nodes
-- Subscription
+- Store
 - Settings
 - Logs
 
@@ -86,7 +86,7 @@ Latency colors:
 - Orange: 300 to 1000 ms
 - Red: timeout or over 1000 ms
 
-## Subscription Screen
+## Store Screen
 
 Required elements:
 
@@ -96,9 +96,14 @@ Required elements:
 - Total traffic
 - Remaining traffic
 - Reset day
-- Subscribe URL copy
-- Accelerated subscribe URL copy if available
-- Reset subscription token action
+- Renew current plan action
+- Upgrade plan action
+- Buy traffic package action
+- Store entry action
+
+The client UI should not expose raw subscription links. Traditional
+subscription URLs remain an API compatibility concern, not a primary client
+surface.
 
 ## Settings Screen
 
@@ -146,4 +151,3 @@ Use short operational text:
 - Core failed to start
 
 Chinese UI labels are preferred for the first release.
-
