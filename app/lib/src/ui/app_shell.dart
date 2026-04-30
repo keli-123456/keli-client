@@ -481,7 +481,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.7',
+            Text('v0.1.8',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -963,43 +963,53 @@ class _CurrentNodePanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: keliBlueSoft,
+          Material(
+            color: keliBlueSoft,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFD8E8FF)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: keliBlueStrong,
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child:
-                      const Icon(Icons.public, color: Colors.white, size: 19),
+              onTap: () => showNodePickerDialog(context),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFD8E8FF)),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(n?.name ?? '未选择节点',
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w900)),
-                      const SizedBox(height: 2),
-                      Text(n?.protocol ?? '-',
-                          style:
-                              const TextStyle(color: keliMuted, fontSize: 12)),
-                    ],
-                  ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: keliBlueStrong,
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const Icon(Icons.public,
+                          color: Colors.white, size: 19),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(n?.name ?? '未选择节点',
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 2),
+                          Text(n?.protocol ?? '-',
+                              style: const TextStyle(
+                                  color: keliMuted, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.expand_more_rounded,
+                        color: keliBlueStrong, size: 20),
+                  ],
                 ),
-                const _MiniBadge(text: '已选择', color: keliGreen),
-              ],
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -1028,9 +1038,9 @@ class _CurrentNodePanel extends StatelessWidget {
             children: [
               Expanded(
                 child: _QuickActionButton(
-                  icon: Icons.hub_outlined,
-                  title: '节点',
-                  onTap: () => controller.selectPage(1),
+                  icon: Icons.swap_horiz_rounded,
+                  title: '更换',
+                  onTap: () => showNodePickerDialog(context),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1038,9 +1048,9 @@ class _CurrentNodePanel extends StatelessWidget {
                 child: _QuickActionButton(
                   icon: Icons.speed_outlined,
                   title: controller.isTestingLatency ? '测速中' : '测速',
-                  onTap: controller.isTestingLatency
+                  onTap: controller.isTestingLatency || n == null
                       ? null
-                      : controller.testAllLatency,
+                      : controller.testSelectedNodeLatency,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1054,6 +1064,197 @@ class _CurrentNodePanel extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+Future<void> showNodePickerDialog(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => const _NodePickerDialog(),
+  );
+}
+
+class _NodePickerDialog extends StatefulWidget {
+  const _NodePickerDialog();
+
+  @override
+  State<_NodePickerDialog> createState() => _NodePickerDialogState();
+}
+
+class _NodePickerDialogState extends State<_NodePickerDialog> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final normalizedQuery = query.trim().toLowerCase();
+    final nodes = controller.nodes.where((node) {
+      if (normalizedQuery.isEmpty) {
+        return true;
+      }
+      return node.name.toLowerCase().contains(normalizedQuery) ||
+          node.protocol.toLowerCase().contains(normalizedQuery) ||
+          node.tags.any((tag) => tag.toLowerCase().contains(normalizedQuery));
+    }).toList();
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('选择节点',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w900)),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                onChanged: (value) => setState(() => query = value),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: '搜索节点、协议或标签',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: nodes.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(28),
+                          child: Text('没有匹配的节点',
+                              style: TextStyle(color: keliMuted)),
+                        ),
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: nodes.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, color: keliLineSoft),
+                        itemBuilder: (context, index) {
+                          final node = nodes[index];
+                          final selected = controller.selectedNodeId == node.id;
+                          return _NodePickerRow(
+                            node: node,
+                            selected: selected,
+                            onTap: () async {
+                              await controller.selectNode(node);
+                              if (context.mounted) {
+                                Navigator.of(context).pop();
+                              }
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NodePickerRow extends StatelessWidget {
+  const _NodePickerRow({
+    required this.node,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ProxyNode node;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final latencyColor = latencyStatusColor(node.latencyMs);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: selected ? keliBlueStrong : const Color(0xFFF2F5F9),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(Icons.public,
+                  color: selected ? Colors.white : keliMuted, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(node.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 3),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      Text(node.protocol,
+                          style:
+                              const TextStyle(color: keliMuted, fontSize: 12)),
+                      Text('${node.rate.toStringAsFixed(1)}x',
+                          style:
+                              const TextStyle(color: keliMuted, fontSize: 12)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              width: 74,
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: latencyColor.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                latencyText(node.latencyMs),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: latencyColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              selected
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: selected ? keliBlueStrong : keliMuted,
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }

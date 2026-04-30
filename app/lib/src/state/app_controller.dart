@@ -653,13 +653,7 @@ class AppController extends ChangeNotifier {
       for (final node in nodes) {
         int? latency;
         try {
-          final config = await api.fetchSingBoxConfig(
-            serverId: node.id,
-            platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
-            coreVersion: '1.13.11',
-          );
-          latency = await coreManager.testLatency(node,
-              config: config, mode: proxyMode);
+          latency = await _measureNodeLatency(node);
         } catch (error) {
           final reason = latencyFailureReason(error);
           failures.putIfAbsent(reason, () => <String>[]).add(node.name);
@@ -682,6 +676,43 @@ class AppController extends ChangeNotifier {
       isTestingLatency = false;
       notifyListeners();
     }
+  }
+
+  Future<void> testSelectedNodeLatency() async {
+    final node = selectedNode;
+    if (node == null || isTestingLatency) {
+      return;
+    }
+    isTestingLatency = true;
+    _log('INFO', '开始测试当前节点 ${node.name}');
+    notifyListeners();
+    try {
+      final latency = await _measureNodeLatency(node);
+      nodes = nodes
+          .map((item) =>
+              item.id == node.id ? item.copyWith(latencyMs: latency) : item)
+          .toList();
+      if (latency == null) {
+        _log('WARN', '当前节点测速未成功: ${node.name}');
+      } else {
+        _log('INFO', '当前节点测速完成: ${node.name} ${latency}ms');
+      }
+    } catch (error) {
+      final reason = latencyFailureReason(error);
+      _log('WARN', '当前节点测速未成功：$reason · ${node.name}');
+    } finally {
+      isTestingLatency = false;
+      notifyListeners();
+    }
+  }
+
+  Future<int?> _measureNodeLatency(ProxyNode node) async {
+    final config = await api.fetchSingBoxConfig(
+      serverId: node.id,
+      platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+      coreVersion: '1.13.11',
+    );
+    return coreManager.testLatency(node, config: config, mode: proxyMode);
   }
 
   Future<void> refreshDiagnostics({bool logResult = true}) async {
