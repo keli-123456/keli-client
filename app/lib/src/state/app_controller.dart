@@ -26,6 +26,7 @@ class AppController extends ChangeNotifier {
   AppProfile? profile;
   CoreDiagnostics? diagnostics;
   bool isRefreshingDiagnostics = false;
+  bool isTestingLatency = false;
   bool isRefreshingStore = false;
   bool isPurchasing = false;
   String? storeError;
@@ -639,34 +640,43 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> testAllLatency() async {
+    if (isTestingLatency) {
+      return;
+    }
+    isTestingLatency = true;
     _log('INFO', '开始测试节点延迟');
+    notifyListeners();
     final updated = <ProxyNode>[];
     var measured = 0;
-    for (final node in nodes) {
-      int? latency;
-      try {
-        final config = await api.fetchSingBoxConfig(
-          serverId: node.id,
-          platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
-          coreVersion: '1.13.11',
-        );
-        latency = await coreManager.testLatency(node,
-            config: config, mode: proxyMode);
-      } catch (error) {
-        _log('WARN', '节点 ${node.name} 测速失败: $error');
+    try {
+      for (final node in nodes) {
+        int? latency;
+        try {
+          final config = await api.fetchSingBoxConfig(
+            serverId: node.id,
+            platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+            coreVersion: '1.13.11',
+          );
+          latency = await coreManager.testLatency(node,
+              config: config, mode: proxyMode);
+        } catch (error) {
+          _log('WARN', '节点 ${node.name} 测速失败: $error');
+        }
+        if (latency != null) {
+          measured++;
+        }
+        updated.add(node.copyWith(latencyMs: latency));
       }
-      if (latency != null) {
-        measured++;
+      nodes = updated;
+      if (measured == 0) {
+        _log('WARN', '真实节点测速未成功，请查看日志里的具体节点错误');
+      } else {
+        _log('INFO', '延迟测试完成，成功 $measured/${nodes.length} 个');
       }
-      updated.add(node.copyWith(latencyMs: latency));
+    } finally {
+      isTestingLatency = false;
+      notifyListeners();
     }
-    nodes = updated;
-    if (measured == 0) {
-      _log('WARN', '当前版本未接入真实节点测速，延迟保持未测');
-    } else {
-      _log('INFO', '延迟测试完成，成功 $measured/${nodes.length} 个');
-    }
-    notifyListeners();
   }
 
   Future<void> refreshDiagnostics({bool logResult = true}) async {

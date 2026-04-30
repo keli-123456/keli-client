@@ -199,8 +199,8 @@ class WindowsCoreManager implements CoreManager {
     await _rebindLocalProxyInbounds(normalized);
     final clashApiPort = await _availableTcpPort(preferred: 19090);
     _ensureClashApi(normalized, port: clashApiPort);
-    final proxyTag = _delayTestProxyTag(normalized);
-    if (proxyTag == null) {
+    final proxyCandidates = _delayTestProxyCandidates(normalized);
+    if (proxyCandidates.isEmpty) {
       return null;
     }
 
@@ -221,8 +221,11 @@ class WindowsCoreManager implements CoreManager {
       );
       process.stdout.drain<void>();
       process.stderr.drain<void>();
-      await _waitForClashApi(port: clashApiPort);
-      return await _queryProxyDelay(port: clashApiPort, proxyTag: proxyTag);
+      final proxies =
+          await _waitForClashApi(port: clashApiPort, process: process);
+      final proxyNames = _delayTestProxyNames(proxies, proxyCandidates);
+      return await _queryFirstProxyDelay(
+          port: clashApiPort, proxyNames: proxyNames);
     } finally {
       process?.kill();
       try {
@@ -582,12 +585,13 @@ class WindowsCoreManager implements CoreManager {
     throw const CoreException('没有可用的本地 TCP 端口');
   }
 
-  String? _delayTestProxyTag(Map<String, Object?> config) {
+  List<String> _delayTestProxyCandidates(Map<String, Object?> config) {
     final outbounds = config['outbounds'];
     if (outbounds is! List) {
-      return null;
+      return const [];
     }
 
+    final real = <String>[];
     final groups = <String>[];
     final fallback = <String>[];
     for (final item in outbounds) {
@@ -606,7 +610,7 @@ class WindowsCoreManager implements CoreManager {
         groups.add(tag);
         continue;
       }
-      return tag;
+      real.add(tag);
     }
     for (final item in outbounds.whereType<Map>()) {
       final tag = _stringValue(item['tag']);
@@ -614,11 +618,11 @@ class WindowsCoreManager implements CoreManager {
         fallback.add(tag);
       }
     }
-    return groups.isNotEmpty
-        ? groups.first
-        : fallback.isNotEmpty
-            ? fallback.first
-            : null;
+    return <String>{
+      ...real,
+      ...groups,
+      ...fallback,
+    }.toList(growable: false);
   }
 
   int _nextLocalPort(List<Object?> inbounds) {
@@ -888,34 +892,119 @@ class WindowsCoreManager implements CoreManager {
     );
   }
 
-  Future<void> _waitForClashApi({
+  Future<Map<String, Object?>> _waitForClashApi({
     required int port,
-    Duration timeout = const Duration(seconds: 5),
+    Process? process,
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final deadline = DateTime.now().add(timeout);
     Object? lastError;
     while (DateTime.now().isBefore(deadline)) {
       try {
-        await _getJson(_clashApiUri('/version', port: port),
-            timeout: const Duration(seconds: 1));
-        return;
+        final decoded = await _getJson(_clashApiUri('/proxies', port: port),
+            timeout: const Duration(seconds: 2));
+        final proxies = _extractClashProxies(decoded);
+        if (proxies.isNotEmpty) {
+          return proxies;
+        }
+        lastError = '代理列表为空';
       } catch (error) {
         lastError = error;
-        await Future<void>.delayed(const Duration(milliseconds: 180));
       }
+      if (process != null) {
+        final exitCode = await process.exitCode.timeout(
+          const Duration(milliseconds: 1),
+          onTimeout: () => -999999,
+        );
+        if (exitCode != -999999) {
+          throw CoreException('sing-box 测速进程已退出，退出码 $exitCode');
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 220));
     }
     throw CoreException('Clash API 未就绪: $lastError');
   }
 
+  List<String> _delayTestProxyNames(
+    Map<String, Object?> proxies,
+    List<String> candidates,
+  ) {
+    final names = <String>[];
+    for (final candidate in candidates) {
+      if (proxies.containsKey(candidate)) {
+        names.add(candidate);
+      }
+    }
+
+    for (final entry in proxies.entries) {
+      if (names.contains(entry.key)) {
+        continue;
+      }
+      final value = entry.value;
+      if (value is! Map) {
+        continue;
+      }
+      final type = '${value['type']}'.toLowerCase();
+      if (type == 'direct' ||
+          type == 'reject' ||
+          type == 'selector' ||
+          type == 'urltest') {
+        continue;
+      }
+      names.add(entry.key);
+    }
+
+    if (names.isEmpty) {
+      names.addAll(proxies.keys);
+    }
+    return names.toList(growable: false);
+  }
+
+  Map<String, Object?> _extractClashProxies(Object? decoded) {
+    if (decoded is Map) {
+      final proxies = decoded['proxies'];
+      if (proxies is Map) {
+        return Map<String, Object?>.from(proxies);
+      }
+      return Map<String, Object?>.from(decoded);
+    }
+    return <String, Object?>{};
+  }
+
+  Future<int?> _queryFirstProxyDelay({
+    required int port,
+    required List<String> proxyNames,
+  }) async {
+    Object? lastError;
+    for (final proxyName in proxyNames) {
+      try {
+        return await _queryProxyDelay(port: port, proxyName: proxyName);
+      } catch (error) {
+        lastError = error;
+        final message = '$error';
+        if (message.contains('HTTP 408') || message.contains('HTTP 504')) {
+          return null;
+        }
+        if (!message.contains('HTTP 404')) {
+          rethrow;
+        }
+      }
+    }
+    if (lastError != null) {
+      throw CoreException('$lastError');
+    }
+    return null;
+  }
+
   Future<int?> _queryProxyDelay({
     required int port,
-    required String proxyTag,
+    required String proxyName,
   }) async {
     final uri = Uri(
       scheme: 'http',
       host: _clashApiListen,
       port: port,
-      pathSegments: <String>['proxies', proxyTag, 'delay'],
+      pathSegments: <String>['proxies', proxyName, 'delay'],
       queryParameters: const <String, String>{
         'url': 'http://www.gstatic.com/generate_204',
         'timeout': '5000',

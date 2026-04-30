@@ -1200,8 +1200,10 @@ class _QuickActionsPanel extends StatelessWidget {
               Expanded(
                 child: _QuickActionButton(
                   icon: Icons.speed_outlined,
-                  title: '测速',
-                  onTap: controller.testAllLatency,
+                  title: controller.isTestingLatency ? '测速中' : '测速',
+                  onTap: controller.isTestingLatency
+                      ? null
+                      : controller.testAllLatency,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1229,10 +1231,11 @@ class _QuickActionButton extends StatelessWidget {
 
   final IconData icon;
   final String title;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: onTap,
@@ -1247,14 +1250,18 @@ class _QuickActionButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 16, color: keliMuted),
+            Icon(icon,
+                size: 16,
+                color: enabled ? keliMuted : keliMuted.withValues(alpha: 0.55)),
             const SizedBox(width: 6),
             Flexible(
               child: Text(title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w800)),
+                  style: TextStyle(
+                      color: enabled ? keliInk : keliMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800)),
             ),
           ],
         ),
@@ -1690,9 +1697,10 @@ class _NodesScreenState extends State<NodesScreen> {
           title: '节点',
           subtitle: '选择节点、收藏和测试延迟',
           trailing: FilledButton.icon(
-            onPressed: controller.testAllLatency,
+            onPressed:
+                controller.isTestingLatency ? null : controller.testAllLatency,
             icon: const Icon(Icons.speed, size: 18),
-            label: const Text('全部测速'),
+            label: Text(controller.isTestingLatency ? '测速中' : '全部测速'),
           ),
         ),
         const SizedBox(height: 16),
