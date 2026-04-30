@@ -348,16 +348,16 @@ class RealKeliApi implements KeliApi {
         await _client.openUrl(method, uri).timeout(const Duration(seconds: 20));
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
-    if (body != null) {
-      request.headers.contentType = ContentType.json;
-      request.write(jsonEncode(body));
-    }
     if (authenticated) {
       final authData = _session?.authData;
       if (authData == null || authData.isEmpty) {
         throw ApiException('未登录或登录已过期');
       }
       request.headers.set(HttpHeaders.authorizationHeader, authData);
+    }
+    if (body != null) {
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(body));
     }
 
     final response = await request.close().timeout(const Duration(seconds: 30));
