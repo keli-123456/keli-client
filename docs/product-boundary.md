@@ -10,6 +10,7 @@ Primary jobs:
 
 - Let a user log in
 - Show plan and store status
+- Buy or renew plans through existing panel order APIs
 - Show available nodes
 - Test latency
 - Connect and disconnect
@@ -24,7 +25,7 @@ It is not:
 - A node server agent
 - A replacement for `kelinode`
 - An admin panel
-- A billing/order center in the first version
+- A full billing/order management center in the first version
 - A generic subscription parser
 - A full rule-editing power-user client in the first version
 

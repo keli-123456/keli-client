@@ -26,6 +26,12 @@ class AppController extends ChangeNotifier {
   AppProfile? profile;
   CoreDiagnostics? diagnostics;
   bool isRefreshingDiagnostics = false;
+  bool isRefreshingStore = false;
+  bool isPurchasing = false;
+  String? storeError;
+  List<StorePlan> storePlans = const [];
+  List<PaymentMethod> paymentMethods = const [];
+  String? selectedPaymentMethodId;
   List<ProxyNode> nodes = const [];
   int selectedNodeId = 49;
   int selectedPage = 0;
@@ -38,7 +44,8 @@ class AppController extends ChangeNotifier {
     duration: Duration.zero,
   );
   final List<LogEntry> logs = <LogEntry>[
-    LogEntry(time: DateTime(2026, 4, 29, 19, 20), level: 'INFO', message: '客户端已启动'),
+    LogEntry(
+        time: DateTime(2026, 4, 29, 19, 20), level: 'INFO', message: '客户端已启动'),
   ];
 
   ProxyNode? get selectedNode {
@@ -53,10 +60,13 @@ class AppController extends ChangeNotifier {
   List<ProxyNode> get filteredNodes {
     return switch (nodeFilter) {
       NodeFilter.all => nodes,
-      NodeFilter.lowLatency => nodes.where((node) => (node.latencyMs ?? 99999) < 300).toList(),
+      NodeFilter.lowLatency =>
+        nodes.where((node) => (node.latencyMs ?? 99999) < 300).toList(),
       NodeFilter.favorite => nodes.where((node) => node.isFavorite).toList(),
-      NodeFilter.hysteria2 => nodes.where((node) => node.protocol == 'Hysteria2').toList(),
-      NodeFilter.vless => nodes.where((node) => node.protocol == 'VLESS').toList(),
+      NodeFilter.hysteria2 =>
+        nodes.where((node) => node.protocol == 'Hysteria2').toList(),
+      NodeFilter.vless =>
+        nodes.where((node) => node.protocol == 'VLESS').toList(),
     };
   }
 
@@ -142,6 +152,9 @@ class AppController extends ChangeNotifier {
     isAuthenticated = false;
     profile = null;
     diagnostics = null;
+    storePlans = const [];
+    paymentMethods = const [];
+    selectedPaymentMethodId = null;
     nodes = const [];
     selectedPage = 0;
     _log('INFO', '已退出登录');
@@ -164,6 +177,99 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void selectPaymentMethod(String? methodId) {
+    selectedPaymentMethodId = methodId;
+    notifyListeners();
+  }
+
+  Future<void> refreshStore() async {
+    isRefreshingStore = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      storePlans = await api.fetchPlans();
+      try {
+        paymentMethods = await api.fetchPaymentMethods();
+      } catch (error) {
+        paymentMethods = const [];
+        _log('WARN', '支付方式加载失败: $error');
+      }
+      if (paymentMethods.isNotEmpty &&
+          !paymentMethods
+              .any((method) => method.id == selectedPaymentMethodId)) {
+        selectedPaymentMethodId = paymentMethods.first.id;
+      }
+      _log('INFO', '商店套餐已更新，套餐 ${storePlans.length} 个');
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '商店加载失败: $error');
+    } finally {
+      isRefreshingStore = false;
+      notifyListeners();
+    }
+  }
+
+  Future<PurchaseResult> purchasePlan(
+      StorePlan plan, PlanPeriodOption period) async {
+    if (isPurchasing) {
+      return const PurchaseResult(message: '正在处理上一个订单');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      final tradeNo =
+          await api.createOrder(planId: plan.id, period: period.period);
+      _log('INFO', '订单已创建: $tradeNo');
+
+      PaymentMethod? selectedMethod;
+      for (final method in paymentMethods) {
+        if (method.id == selectedPaymentMethodId) {
+          selectedMethod = method;
+          break;
+        }
+      }
+      if (selectedMethod == null && period.priceCents > 0) {
+        return PurchaseResult(
+          message: '订单已创建，请复制订单号到面板支付',
+          copyText: tradeNo,
+        );
+      }
+
+      final checkout = await api.checkoutOrder(
+        tradeNo: tradeNo,
+        method: selectedMethod?.id ?? '',
+      );
+
+      if (checkout.type == -1) {
+        await bootstrap();
+        return const PurchaseResult(message: '购买成功，套餐已刷新');
+      }
+
+      final data = checkout.data;
+      if (checkout.type == 1 && data is String && data.isNotEmpty) {
+        return PurchaseResult(message: '订单已创建，正在打开支付页面', externalUrl: data);
+      }
+
+      final paymentText = checkoutDataText(data);
+      if (checkout.type == 0 && paymentText.isNotEmpty) {
+        return PurchaseResult(message: '订单已创建，支付信息已复制', copyText: paymentText);
+      }
+
+      return PurchaseResult(
+        message: '订单已创建，请复制订单号到面板支付',
+        copyText: tradeNo,
+      );
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '购买失败: $error');
+      return PurchaseResult(message: '购买失败: $error');
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> selectNode(ProxyNode node) async {
     selectedNodeId = node.id;
     _log('INFO', '已选择节点 ${node.name}');
@@ -176,7 +282,9 @@ class AppController extends ChangeNotifier {
 
   void toggleFavorite(ProxyNode node) {
     nodes = nodes
-        .map((item) => item.id == node.id ? item.copyWith(isFavorite: !item.isFavorite) : item)
+        .map((item) => item.id == node.id
+            ? item.copyWith(isFavorite: !item.isFavorite)
+            : item)
         .toList();
     notifyListeners();
   }
@@ -301,11 +409,43 @@ class AppController extends ChangeNotifier {
   }
 
   void _log(String level, String message) {
-    logs.insert(0, LogEntry(time: DateTime.now(), level: level, message: message));
+    logs.insert(
+        0, LogEntry(time: DateTime.now(), level: level, message: message));
     if (logs.length > 200) {
       logs.removeRange(200, logs.length);
     }
   }
+}
+
+String checkoutDataText(Object? data) {
+  if (data == null) {
+    return '';
+  }
+  if (data is String) {
+    return data;
+  }
+  if (data is Map) {
+    final parts = <String>[];
+    for (final key in [
+      'payment_url',
+      'qr_data',
+      'address',
+      'amount',
+      'currency',
+      'network',
+      'trade_no',
+    ]) {
+      final value = data[key];
+      if (value != null && '$value'.trim().isNotEmpty) {
+        parts.add('$key: $value');
+      }
+    }
+    if (parts.isNotEmpty) {
+      return parts.join('\n');
+    }
+    return data.toString();
+  }
+  return '$data';
 }
 
 extension ProxyModeLabel on ProxyMode {
@@ -326,7 +466,8 @@ class AppControllerScope extends InheritedNotifier<AppController> {
   }) : super(notifier: controller);
 
   static AppController of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<AppControllerScope>();
+    final scope =
+        context.dependOnInheritedWidgetOfExactType<AppControllerScope>();
     assert(scope != null, 'AppControllerScope not found');
     return scope!.notifier!;
   }

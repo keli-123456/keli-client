@@ -96,10 +96,10 @@ Required elements:
 - Total traffic
 - Remaining traffic
 - Reset day
-- Renew current plan action
-- Upgrade plan action
-- Buy traffic package action
-- Store entry action
+- Plan cards with traffic, device, speed, and available periods
+- Payment method selector
+- Direct order creation
+- Checkout handling for free orders, external payment links, and QR payment data
 
 The client UI should not expose raw subscription links. Traditional
 subscription URLs remain an API compatibility concern, not a primary client

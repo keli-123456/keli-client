@@ -49,14 +49,20 @@ class ApiSession {
     final baseUrl = value['base_url'];
     final apiPrefix = value['api_prefix'];
     final authData = value['auth_data'];
-    if (baseUrl is! String || baseUrl.isEmpty || authData is! String || authData.isEmpty) {
+    if (baseUrl is! String ||
+        baseUrl.isEmpty ||
+        authData is! String ||
+        authData.isEmpty) {
       return null;
     }
     return ApiSession(
       baseUrl: baseUrl,
-      apiPrefix: apiPrefix is String && apiPrefix.isNotEmpty ? apiPrefix : '/api/v1',
+      apiPrefix:
+          apiPrefix is String && apiPrefix.isNotEmpty ? apiPrefix : '/api/v1',
       authData: authData,
-      subscribeToken: value['subscribe_token'] is String ? value['subscribe_token'] as String : null,
+      subscribeToken: value['subscribe_token'] is String
+          ? value['subscribe_token'] as String
+          : null,
     );
   }
 }
@@ -78,8 +84,135 @@ class AppProfile {
   final double totalTrafficGb;
   final int resetDay;
 
-  double get remainingTrafficGb => (totalTrafficGb - usedTrafficGb).clamp(0, totalTrafficGb).toDouble();
-  double get usageRatio => totalTrafficGb <= 0 ? 0 : (usedTrafficGb / totalTrafficGb).clamp(0, 1).toDouble();
+  double get remainingTrafficGb =>
+      (totalTrafficGb - usedTrafficGb).clamp(0, totalTrafficGb).toDouble();
+  double get usageRatio => totalTrafficGb <= 0
+      ? 0
+      : (usedTrafficGb / totalTrafficGb).clamp(0, 1).toDouble();
+}
+
+class StorePlan {
+  const StorePlan({
+    required this.id,
+    required this.name,
+    required this.content,
+    required this.prices,
+    required this.transferEnable,
+    required this.speedLimit,
+    required this.deviceLimit,
+    required this.sell,
+    required this.renew,
+    required this.sort,
+    this.tags = const [],
+  });
+
+  final int id;
+  final String name;
+  final String content;
+  final Map<String, int> prices;
+  final double transferEnable;
+  final double? speedLimit;
+  final int? deviceLimit;
+  final bool sell;
+  final bool renew;
+  final int sort;
+  final List<String> tags;
+
+  List<PlanPeriodOption> get periodOptions {
+    return planPeriodDefinitions
+        .where((item) => (prices[item.period] ?? 0) > 0)
+        .map((item) => item.copyWith(priceCents: prices[item.period] ?? 0))
+        .toList();
+  }
+
+  String get trafficLabel {
+    if (transferEnable <= 0) {
+      return '0 GB';
+    }
+    final gb = transferEnable < 10000
+        ? transferEnable
+        : transferEnable / 1024 / 1024 / 1024;
+    if (gb >= 1024) {
+      return '${(gb / 1024).toStringAsFixed(1)} TB';
+    }
+    return '${gb.toStringAsFixed(gb >= 100 ? 0 : 1)} GB';
+  }
+}
+
+class PlanPeriodOption {
+  const PlanPeriodOption({
+    required this.period,
+    required this.label,
+    required this.months,
+    required this.priceCents,
+  });
+
+  final String period;
+  final String label;
+  final int months;
+  final int priceCents;
+
+  PlanPeriodOption copyWith({int? priceCents}) {
+    return PlanPeriodOption(
+      period: period,
+      label: label,
+      months: months,
+      priceCents: priceCents ?? this.priceCents,
+    );
+  }
+}
+
+const planPeriodDefinitions = <PlanPeriodOption>[
+  PlanPeriodOption(
+      period: 'month_price', label: '月付', months: 1, priceCents: 0),
+  PlanPeriodOption(
+      period: 'quarter_price', label: '季付', months: 3, priceCents: 0),
+  PlanPeriodOption(
+      period: 'half_year_price', label: '半年', months: 6, priceCents: 0),
+  PlanPeriodOption(
+      period: 'year_price', label: '年付', months: 12, priceCents: 0),
+  PlanPeriodOption(
+      period: 'two_year_price', label: '两年', months: 24, priceCents: 0),
+  PlanPeriodOption(
+      period: 'three_year_price', label: '三年', months: 36, priceCents: 0),
+  PlanPeriodOption(
+      period: 'onetime_price', label: '一次性', months: 0, priceCents: 0),
+  PlanPeriodOption(
+      period: 'reset_price', label: '重置流量', months: 0, priceCents: 0),
+];
+
+class PaymentMethod {
+  const PaymentMethod({
+    required this.id,
+    required this.name,
+    required this.payment,
+  });
+
+  final String id;
+  final String name;
+  final String payment;
+}
+
+class CheckoutResult {
+  const CheckoutResult({
+    required this.type,
+    this.data,
+  });
+
+  final int type;
+  final Object? data;
+}
+
+class PurchaseResult {
+  const PurchaseResult({
+    required this.message,
+    this.externalUrl,
+    this.copyText,
+  });
+
+  final String message;
+  final String? externalUrl;
+  final String? copyText;
 }
 
 class ProxyNode {

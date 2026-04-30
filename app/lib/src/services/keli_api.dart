@@ -16,6 +16,20 @@ abstract interface class KeliApi {
 
   Future<List<ProxyNode>> fetchServers();
 
+  Future<List<StorePlan>> fetchPlans();
+
+  Future<List<PaymentMethod>> fetchPaymentMethods();
+
+  Future<String> createOrder({
+    required int planId,
+    required String period,
+  });
+
+  Future<CheckoutResult> checkoutOrder({
+    required String tradeNo,
+    required String method,
+  });
+
   Future<Map<String, Object?>> fetchSingBoxConfig({
     required int serverId,
     required String platform,
@@ -100,7 +114,8 @@ class RealKeliApi implements KeliApi {
       final body = await _requestWithSession('GET', '/app/bootstrap');
       final data = _extractDataMap(body);
       final profile = _parseProfile(data);
-      final nodes = _parseNodes(data['servers'] ?? data['nodes'] ?? data['data']);
+      final nodes =
+          _parseNodes(data['servers'] ?? data['nodes'] ?? data['data']);
       if (nodes.isNotEmpty) {
         return BootstrapPayload(profile: profile, nodes: nodes);
       }
@@ -109,7 +124,8 @@ class RealKeliApi implements KeliApi {
     }
 
     final infoBody = await _requestWithSession('GET', '/user/info');
-    final subscribeBody = await _requestWithSession('GET', '/user/getSubscribe');
+    final subscribeBody =
+        await _requestWithSession('GET', '/user/getSubscribe');
     final info = _extractDataMap(infoBody);
     final subscribe = _extractDataMap(subscribeBody);
     final profile = _parseProfile(<String, Object?>{
@@ -128,6 +144,61 @@ class RealKeliApi implements KeliApi {
   }
 
   @override
+  Future<List<StorePlan>> fetchPlans() async {
+    final body = await _requestWithSession('GET', '/user/plan/fetch');
+    final payload = _extractPayload(body);
+    return _parsePlans(payload);
+  }
+
+  @override
+  Future<List<PaymentMethod>> fetchPaymentMethods() async {
+    final body =
+        await _requestWithSession('GET', '/user/order/getPaymentMethod');
+    final payload = _extractPayload(body);
+    return _parsePaymentMethods(payload);
+  }
+
+  @override
+  Future<String> createOrder({
+    required int planId,
+    required String period,
+  }) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/order/save',
+      body: <String, Object?>{
+        'plan_id': planId,
+        'period': period,
+      },
+    );
+    final payload = _extractPayload(body);
+    final tradeNo = _stringValue(payload);
+    if (tradeNo == null || tradeNo.isEmpty) {
+      throw ApiException('订单创建成功但缺少 trade_no');
+    }
+    return tradeNo;
+  }
+
+  @override
+  Future<CheckoutResult> checkoutOrder({
+    required String tradeNo,
+    required String method,
+  }) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/order/checkout',
+      body: <String, Object?>{
+        'trade_no': tradeNo,
+        'method': method,
+      },
+    );
+    return CheckoutResult(
+      type: _intValue(body['type']) ?? 0,
+      data: body['data'],
+    );
+  }
+
+  @override
   Future<Map<String, Object?>> fetchSingBoxConfig({
     required int serverId,
     required String platform,
@@ -137,7 +208,8 @@ class RealKeliApi implements KeliApi {
       'core': 'sing-box',
       'platform': platform,
       'server_id': '$serverId',
-      if (coreVersion != null && coreVersion.isNotEmpty) 'core_version': coreVersion,
+      if (coreVersion != null && coreVersion.isNotEmpty)
+        'core_version': coreVersion,
     };
     final body = await _requestWithSession('GET', '/app/config', query: query);
     final data = _extractDataMap(body);
@@ -175,7 +247,8 @@ class RealKeliApi implements KeliApi {
     required bool authenticated,
   }) async {
     final uri = _buildUri(baseUrl, apiPrefix, path, query);
-    final request = await _client.openUrl(method, uri).timeout(const Duration(seconds: 20));
+    final request =
+        await _client.openUrl(method, uri).timeout(const Duration(seconds: 20));
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
     if (body != null) {
@@ -193,11 +266,15 @@ class RealKeliApi implements KeliApi {
     final response = await request.close().timeout(const Duration(seconds: 30));
     final raw = await response.transform(utf8.decoder).join();
     if (response.statusCode == 304) {
-      return <String, Object?>{'status': 'success', 'data': <String, Object?>{}};
+      return <String, Object?>{
+        'status': 'success',
+        'data': <String, Object?>{}
+      };
     }
     final decoded = _decodeJson(raw);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(_messageFrom(decoded) ?? 'HTTP ${response.statusCode}');
+      throw ApiException(
+          _messageFrom(decoded) ?? 'HTTP ${response.statusCode}');
     }
     if (decoded is Map<String, Object?>) {
       final status = decoded['status'];
@@ -209,7 +286,8 @@ class RealKeliApi implements KeliApi {
     throw ApiException('响应格式不是 JSON 对象');
   }
 
-  Uri _buildUri(String baseUrl, String apiPrefix, String path, Map<String, String>? query) {
+  Uri _buildUri(String baseUrl, String apiPrefix, String path,
+      Map<String, String>? query) {
     final base = Uri.parse(baseUrl);
     final segments = <String>[
       ...base.pathSegments.where((segment) => segment.isNotEmpty),
@@ -246,15 +324,23 @@ class RealKeliApi implements KeliApi {
   }
 
   AppProfile _parseProfile(Map<String, Object?> data) {
-    final user = data['user'] is Map ? Map<String, Object?>.from(data['user'] as Map) : <String, Object?>{};
-    final subscribe = data['subscribe'] is Map ? Map<String, Object?>.from(data['subscribe'] as Map) : <String, Object?>{};
-    final plan = subscribe['plan'] is Map ? Map<String, Object?>.from(subscribe['plan'] as Map) : <String, Object?>{};
+    final user = data['user'] is Map
+        ? Map<String, Object?>.from(data['user'] as Map)
+        : <String, Object?>{};
+    final subscribe = data['subscribe'] is Map
+        ? Map<String, Object?>.from(data['subscribe'] as Map)
+        : <String, Object?>{};
+    final plan = subscribe['plan'] is Map
+        ? Map<String, Object?>.from(subscribe['plan'] as Map)
+        : <String, Object?>{};
     final upload = _numValue(subscribe['u']) ?? 0;
     final download = _numValue(subscribe['d']) ?? 0;
     final total = _numValue(subscribe['transfer_enable']) ?? 0;
     final expiredAt = _intValue(subscribe['expired_at']);
     return AppProfile(
-      email: _stringValue(user['email']) ?? _stringValue(subscribe['email']) ?? '未登录',
+      email: _stringValue(user['email']) ??
+          _stringValue(subscribe['email']) ??
+          '未登录',
       planName: _stringValue(plan['name']) ?? '未订阅',
       expireAt: expiredAt == null || expiredAt <= 0
           ? DateTime(2099, 12, 31)
@@ -265,9 +351,105 @@ class RealKeliApi implements KeliApi {
     );
   }
 
+  List<StorePlan> _parsePlans(Object? value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((raw) => _parsePlan(Map<String, Object?>.from(raw)))
+          .where((plan) => plan.sell)
+          .toList()
+        ..sort((a, b) => a.sort.compareTo(b.sort));
+    }
+    if (value is Map) {
+      if (value['data'] != null) {
+        return _parsePlans(value['data']);
+      }
+      return value.values
+          .whereType<Map>()
+          .map((raw) => _parsePlan(Map<String, Object?>.from(raw)))
+          .where((plan) => plan.sell)
+          .toList()
+        ..sort((a, b) => a.sort.compareTo(b.sort));
+    }
+    return const [];
+  }
+
+  StorePlan _parsePlan(Map<String, Object?> raw) {
+    return StorePlan(
+      id: _intValue(raw['id']) ?? 0,
+      name: _stringValue(raw['name']) ?? '未命名套餐',
+      content: _cleanText(_stringValue(raw['content']) ?? ''),
+      prices: _parsePlanPrices(raw),
+      transferEnable: (_numValue(raw['transfer_enable']) ?? 0).toDouble(),
+      speedLimit: _numValue(raw['speed_limit'])?.toDouble(),
+      deviceLimit: _intValue(raw['device_limit']),
+      sell: raw.containsKey('sell') ? _boolValue(raw['sell']) : true,
+      renew: raw.containsKey('renew') ? _boolValue(raw['renew']) : true,
+      sort: _intValue(raw['sort']) ?? 999,
+      tags: _parseTags(raw['tags']),
+    );
+  }
+
+  Map<String, int> _parsePlanPrices(Map<String, Object?> raw) {
+    final prices = <String, int>{};
+    final modern = raw['prices'];
+    if (modern is Map) {
+      const mapping = <String, String>{
+        'monthly': 'month_price',
+        'quarterly': 'quarter_price',
+        'half_yearly': 'half_year_price',
+        'yearly': 'year_price',
+        'two_yearly': 'two_year_price',
+        'three_yearly': 'three_year_price',
+        'onetime': 'onetime_price',
+        'reset_traffic': 'reset_price',
+      };
+      for (final entry in modern.entries) {
+        final key = mapping['${entry.key}'] ?? '${entry.key}';
+        final value = _intValue(entry.value) ?? 0;
+        if (value > 0) {
+          prices[key] = value;
+        }
+      }
+    }
+
+    for (final definition in planPeriodDefinitions) {
+      final value = _intValue(raw[definition.period]) ?? 0;
+      if (value > 0) {
+        prices[definition.period] = value;
+      }
+    }
+    return prices;
+  }
+
+  List<PaymentMethod> _parsePaymentMethods(Object? value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((raw) => _parsePaymentMethod(Map<String, Object?>.from(raw)))
+          .where((method) => method.id.isNotEmpty)
+          .toList();
+    }
+    if (value is Map && value['data'] != null) {
+      return _parsePaymentMethods(value['data']);
+    }
+    return const [];
+  }
+
+  PaymentMethod _parsePaymentMethod(Map<String, Object?> raw) {
+    return PaymentMethod(
+      id: _stringValue(raw['id']) ?? '',
+      name: _stringValue(raw['name']) ?? _stringValue(raw['payment']) ?? '支付方式',
+      payment: _stringValue(raw['payment']) ?? '',
+    );
+  }
+
   List<ProxyNode> _parseNodes(Object? value) {
     if (value is List) {
-      return value.whereType<Map>().map((raw) => _parseNode(Map<String, Object?>.from(raw))).toList();
+      return value
+          .whereType<Map>()
+          .map((raw) => _parseNode(Map<String, Object?>.from(raw)))
+          .toList();
     }
     if (value is Map) {
       if (value['servers'] != null) {
@@ -295,6 +477,60 @@ class RealKeliApi implements KeliApi {
     return const [];
   }
 
+  String _cleanText(String value) {
+    final normalized = value
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .trim();
+    if (normalized.startsWith('[') || normalized.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(normalized);
+        final lines = _contentLines(decoded);
+        if (lines.isNotEmpty) {
+          return lines.join(' · ');
+        }
+      } catch (_) {
+        return normalized;
+      }
+    }
+    return normalized;
+  }
+
+  List<String> _contentLines(Object? value) {
+    if (value is List) {
+      return value
+          .expand(_contentLines)
+          .where((line) => line.trim().isNotEmpty)
+          .toList();
+    }
+    if (value is Map) {
+      for (final key in [
+        'feature',
+        'title',
+        'name',
+        'label',
+        'value',
+        'content',
+        'description'
+      ]) {
+        final item = value[key];
+        if (item != null && '$item'.trim().isNotEmpty) {
+          return ['$item'.trim()];
+        }
+      }
+      return value.values
+          .map((item) => '$item'.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+    }
+    if (value is String && value.trim().isNotEmpty) {
+      return [value.trim()];
+    }
+    return const [];
+  }
+
   ProxyNode _parseNode(Map<String, Object?> raw) {
     final type = _stringValue(raw['type']) ?? 'unknown';
     final version = _intValue(raw['version']);
@@ -311,16 +547,26 @@ class RealKeliApi implements KeliApi {
 
   List<String> _parseTags(Object? value) {
     if (value is List) {
-      return value.map((item) => '$item').where((item) => item.isNotEmpty).toList();
+      return value
+          .map((item) => '$item')
+          .where((item) => item.isNotEmpty)
+          .toList();
     }
     if (value is String && value.isNotEmpty) {
       try {
         final decoded = jsonDecode(value);
         if (decoded is List) {
-          return decoded.map((item) => '$item').where((item) => item.isNotEmpty).toList();
+          return decoded
+              .map((item) => '$item')
+              .where((item) => item.isNotEmpty)
+              .toList();
         }
       } catch (_) {
-        return value.split(',').map((item) => item.trim()).where((item) => item.isNotEmpty).toList();
+        return value
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList();
       }
     }
     return const [];
@@ -449,6 +695,88 @@ class MockKeliApi implements KeliApi {
   Future<List<ProxyNode>> fetchServers() async {
     await Future<void>.delayed(const Duration(milliseconds: 180));
     return _nodes;
+  }
+
+  @override
+  Future<List<StorePlan>> fetchPlans() async {
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    return const [
+      StorePlan(
+        id: 1,
+        name: '标准套餐',
+        content: '适合日常浏览、视频和多设备轻量使用',
+        prices: {
+          'month_price': 1200,
+          'quarter_price': 3200,
+          'year_price': 11800
+        },
+        transferEnable: 500,
+        speedLimit: null,
+        deviceLimit: 5,
+        sell: true,
+        renew: true,
+        sort: 1,
+      ),
+      StorePlan(
+        id: 2,
+        name: '旗舰套餐',
+        content: '更高流量和更多节点，适合长期主力使用',
+        prices: {
+          'month_price': 2200,
+          'quarter_price': 6000,
+          'year_price': 21800
+        },
+        transferEnable: 1024,
+        speedLimit: null,
+        deviceLimit: 10,
+        sell: true,
+        renew: true,
+        sort: 2,
+      ),
+      StorePlan(
+        id: 3,
+        name: '临时流量包',
+        content: '不改变当前套餐，临时补充可用流量',
+        prices: {'onetime_price': 900},
+        transferEnable: 100,
+        speedLimit: null,
+        deviceLimit: null,
+        sell: true,
+        renew: false,
+        sort: 3,
+      ),
+    ];
+  }
+
+  @override
+  Future<List<PaymentMethod>> fetchPaymentMethods() async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    return const [
+      PaymentMethod(id: '1', name: '余额支付', payment: 'balance'),
+      PaymentMethod(id: '2', name: '在线支付', payment: 'gateway'),
+    ];
+  }
+
+  @override
+  Future<String> createOrder({
+    required int planId,
+    required String period,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    return 'MOCK${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  @override
+  Future<CheckoutResult> checkoutOrder({
+    required String tradeNo,
+    required String method,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    if (method == '1') {
+      return const CheckoutResult(type: -1, data: true);
+    }
+    return CheckoutResult(
+        type: 1, data: 'https://sp.huhu.icu/#/order/$tradeNo');
   }
 
   @override
