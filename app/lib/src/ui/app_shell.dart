@@ -459,7 +459,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.2',
+            Text('v0.1.3',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -524,8 +524,6 @@ class HomeScreen extends StatelessWidget {
                   _CurrentNodePanel(node: node),
                   const SizedBox(height: 12),
                   _ModeAndRoutePanel(),
-                  const SizedBox(height: 12),
-                  const _QuickActionsPanel(),
                 ],
               ),
             ),
@@ -913,6 +911,7 @@ class _CurrentNodePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final n = node;
+    final controller = AppControllerScope.of(context);
     return KeliCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -987,6 +986,38 @@ class _CurrentNodePanel extends StatelessWidget {
                       label: '倍率',
                       value:
                           n == null ? '-' : '${n.rate.toStringAsFixed(1)}x')),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: keliLineSoft),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _QuickActionButton(
+                  icon: Icons.hub_outlined,
+                  title: '节点',
+                  onTap: () => controller.selectPage(1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QuickActionButton(
+                  icon: Icons.speed_outlined,
+                  title: controller.isTestingLatency ? '测速中' : '测速',
+                  onTap: controller.isTestingLatency
+                      ? null
+                      : controller.testAllLatency,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QuickActionButton(
+                  icon: Icons.article_outlined,
+                  title: '日志',
+                  onTap: () => controller.selectPage(4),
+                ),
+              ),
             ],
           ),
         ],
@@ -1170,55 +1201,6 @@ class _CompactModeButton extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _QuickActionsPanel extends StatelessWidget {
-  const _QuickActionsPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = AppControllerScope.of(context);
-    return KeliCard(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('快捷操作',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: _QuickActionButton(
-                  icon: Icons.hub_outlined,
-                  title: '节点',
-                  onTap: () => controller.selectPage(1),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickActionButton(
-                  icon: Icons.speed_outlined,
-                  title: controller.isTestingLatency ? '测速中' : '测速',
-                  onTap: controller.isTestingLatency
-                      ? null
-                      : controller.testAllLatency,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickActionButton(
-                  icon: Icons.article_outlined,
-                  title: '日志',
-                  onTap: () => controller.selectPage(4),
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -2035,7 +2017,7 @@ class _StoreScreenState extends State<StoreScreen> {
       children: [
         _PageHeader(
           title: '商店',
-          subtitle: '套餐、流量和续费',
+          subtitle: '套餐购买、流量包和订单',
           trailing: isDesktop
               ? OutlinedButton.icon(
                   onPressed: controller.isRefreshingStore
@@ -2138,7 +2120,7 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
           onSelectTrafficPlan: (id) =>
               setState(() => selectedTrafficPlanId = id),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 14),
         if (tab == _StoreTab.plans)
           _StorePeriodPanel(
             title: selectedPlan == null
@@ -2211,7 +2193,7 @@ class _StoreSelectionPanel extends StatelessWidget {
           _StoreTabs(current: tab, onChanged: onTabChanged),
           const CardDivider(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(22, 16, 22, 20),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
             child: switch (tab) {
               _StoreTab.plans => _MonthlyPlanSelection(
                   controller: controller,
@@ -2244,33 +2226,39 @@ class _StoreTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 66,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            const SizedBox(width: 22),
-            _StoreTabButton(
-              icon: Icons.workspace_premium_outlined,
-              label: '包月套餐',
-              selected: current == _StoreTab.plans,
-              onTap: () => onChanged(_StoreTab.plans),
-            ),
-            _StoreTabButton(
-              icon: Icons.attach_money_rounded,
-              label: '按量付费',
-              selected: current == _StoreTab.traffic,
-              onTap: () => onChanged(_StoreTab.traffic),
-            ),
-            _StoreTabButton(
-              icon: Icons.schedule_rounded,
-              label: '订单',
-              selected: current == _StoreTab.orders,
-              onTap: () => onChanged(_StoreTab.orders),
-            ),
-            const SizedBox(width: 22),
-          ],
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6F8FB),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: keliLineSoft),
+          ),
+          child: Row(
+            children: [
+              _StoreTabButton(
+                icon: Icons.workspace_premium_outlined,
+                label: '包月套餐',
+                selected: current == _StoreTab.plans,
+                onTap: () => onChanged(_StoreTab.plans),
+              ),
+              _StoreTabButton(
+                icon: Icons.attach_money_rounded,
+                label: '按量付费',
+                selected: current == _StoreTab.traffic,
+                onTap: () => onChanged(_StoreTab.traffic),
+              ),
+              _StoreTabButton(
+                icon: Icons.schedule_rounded,
+                label: '订单',
+                selected: current == _StoreTab.orders,
+                onTap: () => onChanged(_StoreTab.orders),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2294,17 +2282,22 @@ class _StoreTabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
-        height: 66,
-        margin: const EdgeInsets.only(right: 28),
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: selected ? keliBlueStrong : Colors.transparent,
-              width: 1.5,
-            ),
-          ),
+          color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF0F172A).withValues(alpha: 0.055),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : null,
         ),
         child: Row(
           children: [
@@ -2349,8 +2342,6 @@ class _MonthlyPlanSelection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _StoreNoticeList(),
-        const SizedBox(height: 18),
         _UpgradeRuleBanner(
           upgradeOnly: upgradeOnly,
           hasUpgradeTargets: hasUpgradeTargets,
@@ -2391,13 +2382,12 @@ class _TrafficPlanSelection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('注意事项',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 10),
-        const _StoreBullet(text: '按量付费不会替换当前包月套餐。'),
-        const _StoreBullet(text: '购买后流量按对应套餐规则立即生效。'),
-        const _StoreBullet(text: '若为重置流量，将以面板订单规则为准。'),
-        const SizedBox(height: 22),
+        const _StoreHintStrip(
+          icon: Icons.info_outline,
+          title: '购买说明',
+          text: '按量付费不会替换当前包月套餐，支付后按面板订单规则立即生效。',
+        ),
+        const SizedBox(height: 18),
         const Text('套餐选择',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
         const SizedBox(height: 14),
@@ -2415,51 +2405,57 @@ class _TrafficPlanSelection extends StatelessWidget {
   }
 }
 
-class _StoreNoticeList extends StatelessWidget {
-  const _StoreNoticeList();
+class _StoreHintStrip extends StatelessWidget {
+  const _StoreHintStrip({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
 
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('注意事项',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
-        SizedBox(height: 10),
-        _StoreBullet(text: '续费订阅：续费会在当前套餐基础上叠加有效期。'),
-        _StoreBullet(text: '重置流量：购买重置类套餐将重置当月流量。'),
-        _StoreBullet(text: '更换套餐：更换套餐会以新套餐为准。'),
-      ],
-    );
-  }
-}
-
-class _StoreBullet extends StatelessWidget {
-  const _StoreBullet({required this.text});
-
+  final IconData icon;
+  final String title;
   final String text;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 7),
-            child: Icon(Icons.circle, size: 5, color: keliMuted),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: keliBlueSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, size: 17, color: keliBlueStrong),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: keliMuted,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                height: 1.35,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 3),
+                Text(
+                  text,
+                  style: const TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -2485,35 +2481,49 @@ class _UpgradeRuleBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: keliLine),
+        color: const Color(0xFFF8FAFD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow = constraints.maxWidth < 760;
-          final title =
-              hasUpgradeTargets ? '↔ 升级套餐 · 当前套餐支持补差价升级' : '↔ 升级套餐 · 当前暂无可升级目标';
+          final title = hasUpgradeTargets ? '升级套餐' : '当前暂无可升级目标';
           final subtitle = hasUpgradeTargets
               ? '当前套餐：${currentPlanName.isEmpty ? '未识别' : currentPlanName}，确认后立即覆盖生效。'
               : '可购买普通套餐；若需要升级，请确认面板套餐白名单和升级开关。';
-          final text = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          final text = Row(
             children: [
-              Text(
-                title,
-                style:
-                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: keliBlueSoft,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: const Icon(Icons.upgrade_rounded,
+                    size: 18, color: keliBlueStrong),
               ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                    color: keliMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                          color: keliMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
               ),
             ],
           );
@@ -2676,7 +2686,7 @@ class _PlanChoiceButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: selected ? keliBlueSoft : Colors.white,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
@@ -2687,7 +2697,7 @@ class _PlanChoiceButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected ? keliBlueStrong : keliLine,
+              color: selected ? const Color(0xFFD8E8FF) : keliLine,
               width: selected ? 1.2 : 1,
             ),
           ),
@@ -2734,11 +2744,11 @@ class _OrderTabSelection extends StatelessWidget {
     return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('订单', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
-        SizedBox(height: 10),
-        _StoreBullet(text: '客户端内购买会直接创建面板订单。'),
-        _StoreBullet(text: '支付完成后会自动刷新套餐和节点数据。'),
-        _StoreBullet(text: '如支付窗口未打开，会复制订单信息供你到面板处理。'),
+        _StoreHintStrip(
+          icon: Icons.receipt_long_outlined,
+          title: '订单管理',
+          text: '客户端内购买会直接创建面板订单，支付完成后会自动刷新套餐和节点数据。',
+        ),
       ],
     );
   }
@@ -2766,13 +2776,13 @@ class _StorePeriodPanel extends StatelessWidget {
     return SizedBox(
       width: double.infinity,
       child: KeliCard(
-        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title,
                 style:
-                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
             if (plan != null && plan!.content.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
@@ -2786,7 +2796,7 @@ class _StorePeriodPanel extends StatelessWidget {
                 ),
               ),
             ],
-            const SizedBox(height: 34),
+            const SizedBox(height: 22),
             if (plan == null || options.isEmpty)
               const _EmptyStoreBox(message: '当前没有可购买项目')
             else
@@ -2823,15 +2833,15 @@ class _StorePriceGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 780
+        final columns = constraints.maxWidth >= 820
             ? 3
-            : constraints.maxWidth >= 520
+            : constraints.maxWidth >= 560
                 ? 2
                 : 1;
-        final width = (constraints.maxWidth - (columns - 1) * 20) / columns;
+        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
         return Wrap(
-          spacing: 20,
-          runSpacing: 20,
+          spacing: 12,
+          runSpacing: 12,
           children: [
             for (final option in options)
               SizedBox(
@@ -2869,89 +2879,110 @@ class _StorePricingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 28, 16, 16),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: keliLine),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.035),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
+            color: const Color(0xFF0F172A).withValues(alpha: 0.026),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Align(
-            alignment: Alignment.topRight,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
-              decoration: BoxDecoration(
-                color: keliBlueStrong,
-                borderRadius: BorderRadius.circular(3),
+          Row(
+            children: [
+              Expanded(
+                child: Text(plan.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w900)),
               ),
-              child: Text(option.label,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900)),
-            ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: keliBlueSoft,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFFD8E8FF)),
+                ),
+                child: Text(option.label,
+                    style: const TextStyle(
+                        color: keliBlueStrong,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                trafficMode
-                    ? priceNumberText(option.priceCents)
-                    : monthlyPriceNumberText(option),
-                style: const TextStyle(
-                  color: Color(0xFF0F172A),
-                  fontSize: 52,
-                  fontWeight: FontWeight.w700,
-                  height: 0.95,
-                ),
-              ),
-              const SizedBox(width: 6),
               const Padding(
-                padding: EdgeInsets.only(bottom: 8),
+                padding: EdgeInsets.only(bottom: 5),
                 child: Text('￥',
                     style: TextStyle(
                         color: keliMuted,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700)),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800)),
+              ),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    trafficMode
+                        ? priceNumberText(option.priceCents)
+                        : monthlyPriceNumberText(option),
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 36,
+                      fontWeight: FontWeight.w900,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(trafficMode ? '总价' : '每月',
+                    style: const TextStyle(
+                        color: keliMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800)),
               ),
             ],
           ),
           const SizedBox(height: 14),
-          Text(trafficMode ? option.label : '每月',
-              style: const TextStyle(
-                  color: keliMuted, fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 28),
+          const Divider(height: 1, color: keliLineSoft),
+          const SizedBox(height: 12),
           _PlanSpecRow(
               icon: Icons.devices_outlined,
-              label: '允许设备',
+              label: '设备',
               value: plan.deviceLimit == null || plan.deviceLimit == 0
                   ? '无限制'
                   : '${plan.deviceLimit} 台'),
           _PlanSpecRow(
               icon: Icons.wifi_rounded,
-              label: trafficMode ? '可用流量' : '每月可用流量',
+              label: trafficMode ? '流量' : '月流量',
               value: plan.trafficLabel),
           _PlanSpecRow(
               icon: Icons.rocket_launch_outlined,
-              label: '最高网速',
+              label: '速率',
               value: plan.speedLimit == null || plan.speedLimit == 0
                   ? '无限制'
                   : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
-            height: 36,
-            child: FilledButton(
+            height: 38,
+            child: FilledButton.icon(
               onPressed: controller.isPurchasing
                   ? null
                   : () => handleStoreBuy(
@@ -2961,13 +2992,17 @@ class _StorePricingCard extends StatelessWidget {
                         option,
                         isUpgrade: isUpgrade,
                       ),
+              icon: Icon(
+                isUpgrade ? Icons.upgrade_rounded : Icons.shopping_bag_outlined,
+                size: 17,
+              ),
               style: FilledButton.styleFrom(
                 backgroundColor: keliBlueStrong,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(5)),
+                    borderRadius: BorderRadius.circular(8)),
               ),
-              child: Text(controller.isPurchasing
+              label: Text(controller.isPurchasing
                   ? '处理中'
                   : isUpgrade
                       ? '升级购买'
@@ -2994,7 +3029,7 @@ class _PlanSpecRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
           Icon(icon, size: 15, color: keliBlueStrong),
@@ -5907,28 +5942,7 @@ class _LogsScreenState extends State<LogsScreen> {
           padding: EdgeInsets.zero,
           child: Column(
             children: [
-              for (final entry in logs)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: const BoxDecoration(
-                      border: Border(bottom: BorderSide(color: keliLineSoft))),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                          width: 76,
-                          child: Text(timeText(entry.time),
-                              style: const TextStyle(
-                                  color: keliMuted, fontSize: 12))),
-                      _LogLevelBadge(level: entry.level),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: Text(entry.message,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700))),
-                    ],
-                  ),
-                ),
+              for (final entry in logs) _LogEntryRow(entry: entry),
               if (logs.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(32),
@@ -5942,6 +5956,69 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 }
 
+class _LogEntryRow extends StatelessWidget {
+  const _LogEntryRow({required this.entry});
+
+  final LogEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = logSummaryText(entry.message);
+    final detail = logDetailText(entry.message, title);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: keliLineSoft))),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(timeText(entry.time),
+                style: const TextStyle(color: keliMuted, fontSize: 12)),
+          ),
+          _LogLevelBadge(level: entry.level),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                if (detail.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: keliMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: '复制完整日志',
+            visualDensity: VisualDensity.compact,
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: entry.message));
+              if (context.mounted) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('日志已复制')));
+              }
+            },
+            icon: const Icon(Icons.copy_rounded, size: 17),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _LogLevelBadge extends StatelessWidget {
   const _LogLevelBadge({required this.level});
 
@@ -5949,8 +6026,11 @@ class _LogLevelBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isError = level == 'ERROR';
-    final color = isError ? keliRed : keliBlueStrong;
+    final color = switch (level) {
+      'ERROR' => keliRed,
+      'WARN' => keliOrange,
+      _ => keliBlueStrong,
+    };
     return Container(
       width: 58,
       alignment: Alignment.center,
@@ -6540,6 +6620,52 @@ String speedLimitText(double? value) {
       ? value.toStringAsFixed(0)
       : value.toStringAsFixed(1);
   return '$text Mbps';
+}
+
+String normalizedLogMessage(String message) {
+  return message.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+String logSummaryText(String message) {
+  final normalized = normalizedLogMessage(message);
+  if (normalized.isEmpty) {
+    return '-';
+  }
+  final latencyFailureIndex = normalized.indexOf(' 测速失败:');
+  if (normalized.startsWith('节点 ') && latencyFailureIndex > 0) {
+    return normalized.substring(0, latencyFailureIndex + ' 测速失败'.length);
+  }
+  final colonIndex = normalized.indexOf(': ');
+  if (colonIndex > 0 && colonIndex <= 46) {
+    return normalized.substring(0, colonIndex);
+  }
+  if (normalized.length > 86) {
+    return '${normalized.substring(0, 86)}...';
+  }
+  return normalized;
+}
+
+String logDetailText(String message, String summary) {
+  final normalized = normalizedLogMessage(message);
+  if (normalized.isEmpty || normalized == summary) {
+    return '';
+  }
+  var detail = '';
+  if (normalized.startsWith(summary)) {
+    detail = normalized.substring(summary.length).trimLeft();
+    if (detail.startsWith(':')) {
+      detail = detail.substring(1).trimLeft();
+    }
+  } else {
+    final colonIndex = normalized.indexOf(': ');
+    if (colonIndex > 0) {
+      detail = normalized.substring(colonIndex + 2).trimLeft();
+    }
+  }
+  if (detail.length > 128) {
+    return '${detail.substring(0, 128)}...';
+  }
+  return detail;
 }
 
 String profileResetText(AppProfile profile) {
