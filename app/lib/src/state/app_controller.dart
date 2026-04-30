@@ -685,8 +685,10 @@ class AppController extends ChangeNotifier {
                 .putIfAbsent(result.failureReason!, () => <String>[])
                 .add(result.node.name);
           }
-          updated[result.index] =
-              result.node.copyWith(latencyMs: result.latencyMs);
+          updated[result.index] = result.node.copyWith(
+            latencyMs: result.latencyMs,
+            clearLatency: result.latencyMs == null,
+          );
         }
         nodes = List<ProxyNode>.of(updated);
         notifyListeners();
@@ -738,8 +740,12 @@ class AppController extends ChangeNotifier {
     try {
       final latency = await _measureNodeLatency(node);
       nodes = nodes
-          .map((item) =>
-              item.id == node.id ? item.copyWith(latencyMs: latency) : item)
+          .map((item) => item.id == node.id
+              ? item.copyWith(
+                  latencyMs: latency,
+                  clearLatency: latency == null,
+                )
+              : item)
           .toList();
       if (latency == null) {
         _log('WARN', '当前节点测速未成功: ${node.name}');

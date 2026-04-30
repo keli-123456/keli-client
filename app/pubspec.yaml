@@ -1,7 +1,7 @@
 name: keli_client
 description: End-user proxy client for the Keli/Xboardpro stack.
 publish_to: "none"
-version: 0.1.11+16
+version: 0.1.12+17
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

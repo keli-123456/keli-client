@@ -59,6 +59,7 @@ class WindowsCoreManager implements CoreManager {
   String _localProxyListen = '127.0.0.1';
   int _clashApiPort = 0;
   String _clashApiListen = '127.0.0.1';
+  final Set<int> _reservedLatencyPorts = <int>{};
 
   Directory get _coreDir =>
       Directory('${runtimeRoot.path}${Platform.pathSeparator}core');
@@ -196,22 +197,27 @@ class WindowsCoreManager implements CoreManager {
     }
 
     final normalized = _normalizeConfigForMode(config, ProxyMode.system);
-    await _rebindLocalProxyInbounds(normalized);
-    final clashApiPort = await _availableTcpPort(preferred: 19090);
-    _ensureClashApi(normalized, port: clashApiPort);
-    final proxyCandidates = _delayTestProxyCandidates(normalized);
-    if (proxyCandidates.isEmpty) {
-      return null;
-    }
+    final reservedPorts = <int>{};
 
-    await _configDir.create(recursive: true);
-    final file = File(
-        '${_configDir.path}${Platform.pathSeparator}latency-${node.id}-${DateTime.now().millisecondsSinceEpoch}.json');
-    const encoder = JsonEncoder.withIndent('  ');
-    await file.writeAsString(encoder.convert(normalized));
+    File? file;
 
     Process? process;
     try {
+      await _rebindLocalProxyInbounds(normalized, reservedPorts: reservedPorts);
+      final clashApiPort = await _availableTcpPort(
+          preferred: 19090, reservedPorts: reservedPorts);
+      _ensureClashApi(normalized, port: clashApiPort);
+      final proxyCandidates = _delayTestProxyCandidates(normalized);
+      if (proxyCandidates.isEmpty) {
+        return null;
+      }
+
+      await _configDir.create(recursive: true);
+      file = File(
+          '${_configDir.path}${Platform.pathSeparator}latency-${node.id}-${DateTime.now().millisecondsSinceEpoch}.json');
+      const encoder = JsonEncoder.withIndent('  ');
+      await file.writeAsString(encoder.convert(normalized));
+
       process = await Process.start(
         _coreExe.path,
         ['run', '-c', file.path],
@@ -234,10 +240,12 @@ class WindowsCoreManager implements CoreManager {
         process?.kill(ProcessSignal.sigkill);
       }
       try {
-        if (await file.exists()) {
-          await file.delete();
+        final currentFile = file;
+        if (currentFile != null && await currentFile.exists()) {
+          await currentFile.delete();
         }
       } catch (_) {}
+      _reservedLatencyPorts.removeAll(reservedPorts);
     }
   }
 
@@ -536,7 +544,10 @@ class WindowsCoreManager implements CoreManager {
     config['experimental'] = experimental;
   }
 
-  Future<void> _rebindLocalProxyInbounds(Map<String, Object?> config) async {
+  Future<void> _rebindLocalProxyInbounds(
+    Map<String, Object?> config, {
+    Set<int>? reservedPorts,
+  }) async {
     final inbounds = config['inbounds'];
     if (inbounds is! List) {
       return;
@@ -551,22 +562,50 @@ class WindowsCoreManager implements CoreManager {
         continue;
       }
       item['listen'] = '127.0.0.1';
-      item['listen_port'] = await _availableTcpPort(preferred: preferredPort);
+      item['listen_port'] = await _availableTcpPort(
+        preferred: preferredPort,
+        reservedPorts: reservedPorts,
+      );
       preferredPort++;
     }
   }
 
-  Future<int> _availableTcpPort({required int preferred}) async {
+  Future<int> _availableTcpPort({
+    required int preferred,
+    Set<int>? reservedPorts,
+  }) async {
     Future<int?> tryPort(int port) async {
       ServerSocket? socket;
+      var reservedPort = 0;
       try {
+        if (reservedPorts != null && port > 0) {
+          if (_reservedLatencyPorts.contains(port)) {
+            return null;
+          }
+          _reservedLatencyPorts.add(port);
+          reservedPorts.add(port);
+          reservedPort = port;
+        }
         socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, port,
             shared: false);
         final selected = socket.port;
+        if (reservedPorts != null && port == 0) {
+          if (_reservedLatencyPorts.contains(selected)) {
+            await socket.close();
+            return null;
+          }
+          _reservedLatencyPorts.add(selected);
+          reservedPorts.add(selected);
+          reservedPort = selected;
+        }
         await socket.close();
         return selected;
       } catch (_) {
         await socket?.close();
+        if (reservedPort > 0) {
+          _reservedLatencyPorts.remove(reservedPort);
+          reservedPorts?.remove(reservedPort);
+        }
         return null;
       }
     }
@@ -578,9 +617,11 @@ class WindowsCoreManager implements CoreManager {
       }
     }
 
-    final dynamicPort = await tryPort(0);
-    if (dynamicPort != null) {
-      return dynamicPort;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final dynamicPort = await tryPort(0);
+      if (dynamicPort != null) {
+        return dynamicPort;
+      }
     }
     throw const CoreException('没有可用的本地 TCP 端口');
   }
@@ -976,18 +1017,80 @@ class WindowsCoreManager implements CoreManager {
     required List<String> proxyNames,
   }) async {
     Object? lastError;
+    var onlyReachabilityFailures = true;
     for (final proxyName in proxyNames) {
       try {
-        return await _queryProxyDelay(port: port, proxyName: proxyName);
+        final latency =
+            await _queryProxyDelay(port: port, proxyName: proxyName);
+        if (latency != null) {
+          return latency;
+        }
+        lastError = '代理 $proxyName 未返回 delay';
       } catch (error) {
         lastError = error;
         final message = '$error';
-        if (message.contains('HTTP 408') || message.contains('HTTP 504')) {
-          return null;
+        if (_isDelayRetryableFailure(message)) {
+          continue;
         }
-        if (!message.contains('HTTP 404')) {
-          rethrow;
+        if (message.contains('HTTP 404')) {
+          continue;
         }
+        onlyReachabilityFailures = false;
+        rethrow;
+      }
+    }
+    if (onlyReachabilityFailures && lastError != null) {
+      return null;
+    }
+    if (lastError != null) {
+      throw CoreException('$lastError');
+    }
+    return null;
+  }
+
+  static const List<String> _latencyTestUrls = <String>[
+    'https://cp.cloudflare.com/generate_204',
+    'http://www.gstatic.com/generate_204',
+    'http://connectivitycheck.gstatic.com/generate_204',
+    'http://www.msftconnecttest.com/connecttest.txt',
+    'http://detectportal.firefox.com/success.txt',
+  ];
+
+  Future<int?> _queryProxyDelay({
+    required int port,
+    required String proxyName,
+  }) async {
+    Object? lastError;
+    for (final testUrl in _latencyTestUrls) {
+      final uri = Uri(
+        scheme: 'http',
+        host: _clashApiListen,
+        port: port,
+        pathSegments: <String>['proxies', proxyName, 'delay'],
+        queryParameters: <String, String>{
+          'url': testUrl,
+          'timeout': '5000',
+        },
+      );
+      try {
+        final decoded =
+            await _getJson(uri, timeout: const Duration(seconds: 8));
+        if (decoded is Map) {
+          final delay = _intValue(decoded['delay']);
+          if (delay != null) {
+            return delay;
+          }
+          lastError = '代理 $proxyName 使用 $testUrl 未返回 delay';
+          continue;
+        }
+        lastError = '代理 $proxyName 使用 $testUrl 返回非 JSON 对象';
+      } catch (error) {
+        lastError = error;
+        final message = '$error';
+        if (_isDelayRetryableFailure(message)) {
+          continue;
+        }
+        rethrow;
       }
     }
     if (lastError != null) {
@@ -996,25 +1099,14 @@ class WindowsCoreManager implements CoreManager {
     return null;
   }
 
-  Future<int?> _queryProxyDelay({
-    required int port,
-    required String proxyName,
-  }) async {
-    final uri = Uri(
-      scheme: 'http',
-      host: _clashApiListen,
-      port: port,
-      pathSegments: <String>['proxies', proxyName, 'delay'],
-      queryParameters: const <String, String>{
-        'url': 'http://www.gstatic.com/generate_204',
-        'timeout': '5000',
-      },
-    );
-    final decoded = await _getJson(uri, timeout: const Duration(seconds: 8));
-    if (decoded is Map) {
-      return _intValue(decoded['delay']);
-    }
-    return null;
+  bool _isDelayRetryableFailure(String message) {
+    return message.contains('HTTP 408') ||
+        message.contains('HTTP 504') ||
+        message.contains('TimeoutException') ||
+        message.contains('Timeout') ||
+        message.contains('Connection closed') ||
+        message.contains('Connection reset') ||
+        message.contains('Connection refused');
   }
 
   Future<Object?> _getJson(Uri uri, {required Duration timeout}) async {

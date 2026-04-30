@@ -369,6 +369,7 @@ class ProxyNode {
     double? rate,
     bool? isOnline,
     int? latencyMs,
+    bool clearLatency = false,
     bool? isFavorite,
     List<String>? tags,
   }) {
@@ -378,7 +379,7 @@ class ProxyNode {
       protocol: protocol ?? this.protocol,
       rate: rate ?? this.rate,
       isOnline: isOnline ?? this.isOnline,
-      latencyMs: latencyMs ?? this.latencyMs,
+      latencyMs: clearLatency ? null : latencyMs ?? this.latencyMs,
       isFavorite: isFavorite ?? this.isFavorite,
       tags: tags ?? this.tags,
     );
