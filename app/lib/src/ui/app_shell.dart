@@ -459,7 +459,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.3',
+            Text('v0.1.4',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -503,31 +503,35 @@ class HomeScreen extends StatelessWidget {
       children: [
         _DesktopAccountBar(profile: profile),
         const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 8,
-              child: Column(
-                children: [
-                  _ConnectPanel(node: node),
-                  const SizedBox(height: 12),
-                  _RuntimeStrip(isDesktop: true),
-                ],
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 8,
+                child: Column(
+                  children: [
+                    _ConnectPanel(node: node),
+                    const SizedBox(height: 12),
+                    _RuntimeStrip(isDesktop: true),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 5,
-              child: Column(
-                children: [
-                  _CurrentNodePanel(node: node),
-                  const SizedBox(height: 12),
-                  _ModeAndRoutePanel(),
-                ],
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 5,
+                child: Column(
+                  children: [
+                    _CurrentNodePanel(node: node),
+                    const SizedBox(height: 12),
+                    const Expanded(
+                      child: _ModeAndRoutePanel(fillHeight: true),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -1068,7 +1072,9 @@ class _NodeStatCell extends StatelessWidget {
 }
 
 class _ModeAndRoutePanel extends StatelessWidget {
-  const _ModeAndRoutePanel();
+  const _ModeAndRoutePanel({this.fillHeight = false});
+
+  final bool fillHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1094,7 +1100,7 @@ class _ModeAndRoutePanel extends StatelessWidget {
             value: controller.proxyMode == ProxyMode.tun,
             onChanged: (_) => controller.selectMode(ProxyMode.tun),
           ),
-          const SizedBox(height: 9),
+          if (fillHeight) const Spacer() else const SizedBox(height: 9),
           const Divider(height: 1),
           const SizedBox(height: 7),
           const Text('分流设置',
