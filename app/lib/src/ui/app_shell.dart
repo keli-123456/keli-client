@@ -283,12 +283,34 @@ class _PageBodyState extends State<_PageBody> {
         final availableWidth = constraints.maxWidth - horizontalPadding * 2;
         final contentWidth = availableWidth > 1040 ? 1040.0 : availableWidth;
         final fillViewport = widget.isDesktop && widget.page == 0;
+        final contentHeight =
+            (constraints.maxHeight - topPadding - bottomPadding)
+                .clamp(0.0, double.infinity)
+                .toDouble();
         final content = Center(
           child: SizedBox(
             width: contentWidth < 0 ? 0 : contentWidth,
             child: child,
           ),
         );
+
+        if (fillViewport) {
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              topPadding,
+              horizontalPadding,
+              bottomPadding,
+            ),
+            child: Center(
+              child: SizedBox(
+                width: contentWidth < 0 ? 0 : contentWidth,
+                height: contentHeight,
+                child: child,
+              ),
+            ),
+          );
+        }
 
         return CustomScrollView(
           controller: _scrollController,
@@ -301,12 +323,7 @@ class _PageBodyState extends State<_PageBody> {
                 horizontalPadding,
                 bottomPadding,
               ),
-              sliver: fillViewport
-                  ? SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: content,
-                    )
-                  : SliverToBoxAdapter(child: content),
+              sliver: SliverToBoxAdapter(child: content),
             ),
           ],
         );
@@ -464,7 +481,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.6',
+            Text('v0.1.7',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -1112,6 +1129,8 @@ class _ModeAndRoutePanel extends StatelessWidget {
             value: controller.proxyMode == ProxyMode.tun,
             onChanged: (_) => controller.selectMode(ProxyMode.tun),
           ),
+          const SizedBox(height: 10),
+          _ModeSummaryStrip(mode: controller.proxyMode),
           if (fillHeight) const Spacer() else const SizedBox(height: 9),
           const Divider(height: 1),
           const SizedBox(height: 7),
@@ -1121,6 +1140,71 @@ class _ModeAndRoutePanel extends StatelessWidget {
           const DetailLine(label: '路由规则', value: '跟随配置'),
           const DetailLine(label: '局域网规则', value: '跟随配置'),
           const DetailLine(label: 'DNS', value: '跟随配置'),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeSummaryStrip extends StatelessWidget {
+  const _ModeSummaryStrip({required this.mode});
+
+  final ProxyMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = switch (mode) {
+      ProxyMode.tun => '当前使用 TUN 模式',
+      ProxyMode.vpn => '当前使用 VPN 模式',
+      ProxyMode.system => '当前使用系统代理',
+    };
+    final description = switch (mode) {
+      ProxyMode.tun => '通过虚拟网卡接管更多应用流量。',
+      ProxyMode.vpn => '移动端 VPN 模式由系统网络层接管。',
+      ProxyMode.system => '浏览器和常规应用会跟随系统代理设置。',
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFD),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: keliBlueSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(Icons.route_outlined,
+                color: keliBlueStrong, size: 17),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 3),
+                Text(description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: keliMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        height: 1.25)),
+              ],
+            ),
+          ),
         ],
       ),
     );
