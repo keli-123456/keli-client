@@ -3045,7 +3045,11 @@ class _CheckoutDialog extends StatefulWidget {
 
 class _CheckoutDialogState extends State<_CheckoutDialog> {
   String? methodId;
-  bool submitting = false;
+  String? tradeNo;
+  bool creatingOrder = false;
+  bool paying = false;
+  bool cancelling = false;
+  bool checking = false;
   bool refreshing = false;
   PurchaseResult? result;
   String? resultDetail;
@@ -3061,9 +3065,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     final current = widget.controller.selectedPaymentMethodId;
     methodId = methods.any((method) => method.id == current)
         ? current
-        : methods.isEmpty
-            ? null
-            : methods.first.id;
+        : defaultPaymentMethodId(methods);
     if (widget.isUpgrade) {
       unawaited(loadUpgradePreview());
     }
@@ -3107,13 +3109,88 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     }
   }
 
-  Future<void> submit() async {
-    if (submitting) {
+  Future<UpgradePreview?> ensureUpgradePreview() async {
+    if (!widget.isUpgrade) {
+      return null;
+    }
+    final preview = upgradePreview ?? await loadUpgradePreview();
+    if (preview == null || !preview.allowUpgrade) {
+      setState(() {
+        result = PurchaseResult(
+            message: '创建失败: ${previewError ?? preview?.reason ?? '升级预览失败'}');
+        resultDetail = null;
+        resultIsError = true;
+      });
+      return null;
+    }
+    if (preview.quoteToken == null || preview.quoteToken!.trim().isEmpty) {
+      setState(() {
+        result = const PurchaseResult(message: '创建失败: 升级预览缺少 quote_token');
+        resultDetail = null;
+        resultIsError = true;
+      });
+      return null;
+    }
+    return preview;
+  }
+
+  Future<void> createOrder() async {
+    if (creatingOrder || tradeNo != null) {
       return;
     }
-
     setState(() {
-      submitting = true;
+      creatingOrder = true;
+      result = null;
+      resultDetail = null;
+      resultIsError = false;
+    });
+
+    try {
+      final preview = await ensureUpgradePreview();
+      if (widget.isUpgrade && preview == null) {
+        return;
+      }
+
+      final createdTradeNo = widget.isUpgrade
+          ? await widget.controller
+              .createUpgradeOrder(quoteToken: preview!.quoteToken!)
+          : await widget.controller.createPlanOrder(widget.plan, widget.option);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        tradeNo = createdTradeNo;
+        result = PurchaseResult(
+          message: widget.isUpgrade ? '升级订单已创建' : '订单已创建',
+          tradeNo: createdTradeNo,
+          copyText: createdTradeNo,
+        );
+        resultDetail = '订单号已生成，可以继续支付；支付失败时可重试或取消订单。';
+        resultIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result = PurchaseResult(message: '创建失败: $error');
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => creatingOrder = false);
+      }
+    }
+  }
+
+  Future<void> payOrder() async {
+    final currentTradeNo = tradeNo;
+    if (paying || currentTradeNo == null) {
+      return;
+    }
+    setState(() {
+      paying = true;
       result = null;
       resultDetail = null;
       resultIsError = false;
@@ -3123,48 +3200,22 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       widget.controller.selectPaymentMethod(methodId);
     }
 
-    var preview = upgradePreview;
-    if (widget.isUpgrade) {
-      preview ??= await loadUpgradePreview();
-      if (preview == null || !preview.allowUpgrade) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          submitting = false;
-          result = PurchaseResult(
-              message: '购买失败: ${previewError ?? preview?.reason ?? '升级预览失败'}');
-          resultIsError = true;
-        });
-        return;
-      }
-      if (preview.quoteToken == null || preview.quoteToken!.trim().isEmpty) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          submitting = false;
-          result = const PurchaseResult(message: '购买失败: 升级预览缺少 quote_token');
-          resultIsError = true;
-        });
-        return;
-      }
+    final purchase = await widget.controller.payOrder(
+      tradeNo: currentTradeNo,
+      paymentMethodId: methodId,
+      allowNoPaymentMethod: !widget.isUpgrade && widget.option.priceCents <= 0,
+      successMessage: widget.isUpgrade ? '升级成功，套餐已刷新' : '支付成功，套餐已刷新',
+      externalMessage: widget.isUpgrade ? '升级订单已创建，正在打开支付页面' : '正在打开支付页面',
+    );
+
+    await handlePaymentResult(purchase);
+
+    if (mounted) {
+      setState(() => paying = false);
     }
+  }
 
-    final purchase = widget.isUpgrade
-        ? await widget.controller.purchaseUpgrade(
-            widget.plan,
-            widget.option,
-            quoteToken: preview!.quoteToken!,
-            paymentMethodId: methodId,
-            payableAmountCents: preview.payableAmountCents,
-          )
-        : await widget.controller.purchasePlan(
-            widget.plan,
-            widget.option,
-            paymentMethodId: methodId,
-          );
-
+  Future<void> handlePaymentResult(PurchaseResult purchase) async {
     var detail = '';
     if (purchase.copyText != null) {
       await Clipboard.setData(ClipboardData(text: purchase.copyText!));
@@ -3183,13 +3234,100 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     if (!mounted) {
       return;
     }
-
     setState(() {
-      submitting = false;
       result = purchase;
       resultDetail = detail.isEmpty ? null : detail;
-      resultIsError = purchase.message.startsWith('购买失败');
+      resultIsError = purchase.message.startsWith('购买失败') ||
+          purchase.message.startsWith('支付失败');
     });
+  }
+
+  Future<void> checkPaymentStatus() async {
+    final currentTradeNo = tradeNo;
+    if (currentTradeNo == null || checking) {
+      return;
+    }
+    setState(() => checking = true);
+    try {
+      final status = await widget.controller.checkStoreOrder(currentTradeNo);
+      if (!mounted) {
+        return;
+      }
+      if (status == 3) {
+        await widget.controller.bootstrap();
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          result = PurchaseResult(
+              message: widget.isUpgrade ? '升级成功，套餐已刷新' : '支付成功，套餐已刷新',
+              tradeNo: currentTradeNo);
+          resultDetail = null;
+          resultIsError = false;
+        });
+      } else {
+        setState(() {
+          result = PurchaseResult(message: '订单尚未完成支付', tradeNo: currentTradeNo);
+          resultDetail = '当前状态码：$status';
+          resultIsError = false;
+        });
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result =
+            PurchaseResult(message: '查询失败: $error', tradeNo: currentTradeNo);
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => checking = false);
+      }
+    }
+  }
+
+  Future<void> cancelOrder() async {
+    final currentTradeNo = tradeNo;
+    if (currentTradeNo == null || cancelling) {
+      return;
+    }
+    setState(() => cancelling = true);
+    try {
+      await widget.controller.cancelStoreOrder(currentTradeNo);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        tradeNo = null;
+        result = const PurchaseResult(message: '订单已取消');
+        resultDetail = widget.isUpgrade ? '升级订单已取消，如需继续升级请重新预览并创建订单。' : null;
+        resultIsError = false;
+        if (widget.isUpgrade) {
+          upgradePreview = null;
+          previewError = null;
+        }
+      });
+      if (widget.isUpgrade) {
+        unawaited(loadUpgradePreview());
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result =
+            PurchaseResult(message: '取消失败: $error', tradeNo: currentTradeNo);
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => cancelling = false);
+      }
+    }
   }
 
   Future<void> refreshAccount() async {
@@ -3209,18 +3347,25 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     final payableCents = widget.isUpgrade
         ? upgradePreview?.payableAmountCents ?? widget.option.priceCents
         : widget.option.priceCents;
-    final canPay = payableCents <= 0 || methods.isEmpty || methodId != null;
+    final hasTradeNo = tradeNo != null;
+    final canFreePay = !widget.isUpgrade && widget.option.priceCents <= 0;
+    final canPay = hasTradeNo &&
+        (methodId != null || canFreePay || methods.isEmpty) &&
+        !creatingOrder &&
+        !paying &&
+        !cancelling;
     final upgradeBlocked = widget.isUpgrade &&
         previewError != null &&
         upgradePreview?.allowUpgrade != true;
-    final canSubmit = canPay && !previewLoading && !upgradeBlocked;
-    final buttonText = widget.isUpgrade
-        ? methods.isEmpty && payableCents > 0
-            ? '创建升级订单并复制订单号'
-            : '确认升级并支付'
-        : methods.isEmpty && payableCents > 0
-            ? '创建订单并复制订单号'
-            : '创建订单并支付';
+    final canCreate = !hasTradeNo &&
+        !creatingOrder &&
+        !paying &&
+        !previewLoading &&
+        !upgradeBlocked;
+    final busy =
+        creatingOrder || paying || cancelling || checking || refreshing;
+    final createText = widget.isUpgrade ? '创建升级订单' : '创建订单';
+    final payText = methods.isEmpty && payableCents > 0 ? '复制订单号' : '立即支付';
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
@@ -3276,8 +3421,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                           ),
                         ),
                         IconButton(
-                          onPressed:
-                              submitting ? null : () => Navigator.pop(context),
+                          onPressed: busy ? null : () => Navigator.pop(context),
                           icon: const Icon(Icons.close_rounded),
                         ),
                       ],
@@ -3297,32 +3441,39 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                         error: previewError,
                       ),
                     ],
+                    if (hasTradeNo) ...[
+                      const SizedBox(height: 12),
+                      _CheckoutOrderBox(tradeNo: tradeNo!),
+                    ],
                     const SizedBox(height: 16),
-                    const Text('支付方式',
-                        style: TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 10),
-                    if (methods.isEmpty)
-                      const _CheckoutInfoBox(
-                        icon: Icons.info_outline,
-                        title: '暂无可选支付方式',
-                        message: '客户端会先创建订单，并复制订单号供你到面板支付。',
-                      )
-                    else
-                      Column(
-                        children: [
-                          for (final method in methods) ...[
-                            _PaymentMethodTile(
-                              method: method,
-                              selected: method.id == methodId,
-                              onTap: submitting
-                                  ? null
-                                  : () => setState(() => methodId = method.id),
-                            ),
-                            const SizedBox(height: 8),
+                    if (hasTradeNo) ...[
+                      const Text('支付方式',
+                          style: TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 10),
+                      if (methods.isEmpty)
+                        const _CheckoutInfoBox(
+                          icon: Icons.info_outline,
+                          title: '暂无可选支付方式',
+                          message: '订单已创建，可复制订单号到面板处理。',
+                        )
+                      else
+                        Column(
+                          children: [
+                            for (final method in methods) ...[
+                              _PaymentMethodTile(
+                                method: method,
+                                selected: method.id == methodId,
+                                onTap: busy
+                                    ? null
+                                    : () =>
+                                        setState(() => methodId = method.id),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
                           ],
-                        ],
-                      ),
+                        ),
+                    ],
                     const SizedBox(height: 14),
                     if (result != null) ...[
                       _CheckoutResultBox(
@@ -3335,8 +3486,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final closeButton = OutlinedButton(
-                          onPressed:
-                              submitting ? null : () => Navigator.pop(context),
+                          onPressed: busy ? null : () => Navigator.pop(context),
                           child: const Text('关闭'),
                         );
                         final refreshButton = result != null && !resultIsError
@@ -3353,9 +3503,43 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                                 label: Text(refreshing ? '刷新中' : '刷新套餐'),
                               )
                             : null;
-                        final submitButton = FilledButton.icon(
-                          onPressed: !canSubmit || submitting ? null : submit,
-                          icon: submitting
+                        final createButton = FilledButton.icon(
+                          onPressed: canCreate ? createOrder : null,
+                          icon: creatingOrder
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.receipt_long_outlined,
+                                  size: 17),
+                          label: Text(previewLoading
+                              ? '正在预览'
+                              : creatingOrder
+                                  ? '处理中'
+                                  : createText),
+                        );
+                        final payButton = FilledButton.icon(
+                          onPressed: canPay
+                              ? methods.isEmpty && !canFreePay
+                                  ? () async {
+                                      await Clipboard.setData(
+                                          ClipboardData(text: tradeNo!));
+                                      if (!mounted) {
+                                        return;
+                                      }
+                                      setState(() {
+                                        result = PurchaseResult(
+                                            message: '订单号已复制',
+                                            tradeNo: tradeNo);
+                                        resultDetail = '可以到面板订单页继续支付。';
+                                        resultIsError = false;
+                                      });
+                                    }
+                                  : payOrder
+                              : null,
+                          icon: paying
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
@@ -3363,18 +3547,46 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                                       strokeWidth: 2, color: Colors.white),
                                 )
                               : const Icon(Icons.payment_outlined, size: 17),
-                          label: Text(previewLoading
-                              ? '正在预览'
-                              : submitting
-                                  ? '处理中'
-                                  : buttonText),
+                          label: Text(paying ? '支付中' : payText),
+                        );
+                        final cancelButton = OutlinedButton.icon(
+                          onPressed: hasTradeNo && !busy ? cancelOrder : null,
+                          icon: cancelling
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.close_rounded, size: 17),
+                          label: Text(cancelling ? '取消中' : '取消订单'),
+                        );
+                        final checkButton = OutlinedButton.icon(
+                          onPressed:
+                              hasTradeNo && !busy ? checkPaymentStatus : null,
+                          icon: checking
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.fact_check_outlined, size: 17),
+                          label: Text(checking ? '查询中' : '查询状态'),
                         );
 
                         if (constraints.maxWidth < 430) {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              submitButton,
+                              if (hasTradeNo) ...[
+                                payButton,
+                                const SizedBox(height: 8),
+                                checkButton,
+                                const SizedBox(height: 8),
+                                cancelButton,
+                              ] else
+                                createButton,
                               if (refreshButton != null) ...[
                                 const SizedBox(height: 8),
                                 refreshButton,
@@ -3388,12 +3600,19 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                         return Row(
                           children: [
                             Expanded(child: closeButton),
-                            if (refreshButton != null) ...[
+                            if (hasTradeNo) ...[
+                              const SizedBox(width: 10),
+                              Expanded(child: cancelButton),
+                              const SizedBox(width: 10),
+                              Expanded(child: checkButton),
+                            ] else if (refreshButton != null) ...[
                               const SizedBox(width: 10),
                               Expanded(child: refreshButton),
                             ],
                             const SizedBox(width: 10),
-                            Expanded(flex: 2, child: submitButton),
+                            Expanded(
+                                flex: 2,
+                                child: hasTradeNo ? payButton : createButton),
                           ],
                         );
                       },
@@ -3576,6 +3795,47 @@ class _CheckoutSummaryLine extends StatelessWidget {
           Text(value,
               style: const TextStyle(
                   color: keliInk, fontSize: 12, fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckoutOrderBox extends StatelessWidget {
+  const _CheckoutOrderBox({required this.tradeNo});
+
+  final String tradeNo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.receipt_long_outlined,
+              size: 18, color: keliBlueStrong),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SelectableText(
+              '订单号：$tradeNo',
+              style: const TextStyle(
+                color: keliInk,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: '复制订单号',
+            onPressed: () => Clipboard.setData(ClipboardData(text: tradeNo)),
+            icon: const Icon(Icons.copy_rounded, size: 17),
+          ),
         ],
       ),
     );

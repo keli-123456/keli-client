@@ -41,6 +41,14 @@ abstract interface class KeliApi {
     required String method,
   });
 
+  Future<int> checkOrder({
+    required String tradeNo,
+  });
+
+  Future<void> cancelOrder({
+    required String tradeNo,
+  });
+
   Future<Map<String, Object?>> fetchSingBoxConfig({
     required int serverId,
     required String platform,
@@ -261,6 +269,29 @@ class RealKeliApi implements KeliApi {
     return CheckoutResult(
       type: _intValue(body['type']) ?? 0,
       data: body['data'],
+    );
+  }
+
+  @override
+  Future<int> checkOrder({
+    required String tradeNo,
+  }) async {
+    final body = await _requestWithSession(
+      'GET',
+      '/user/order/check',
+      query: <String, String>{'trade_no': tradeNo},
+    );
+    return _intValue(_extractPayload(body)) ?? 0;
+  }
+
+  @override
+  Future<void> cancelOrder({
+    required String tradeNo,
+  }) async {
+    await _requestWithSession(
+      'POST',
+      '/user/order/cancel',
+      body: <String, Object?>{'trade_no': tradeNo},
     );
   }
 
@@ -956,6 +987,21 @@ class MockKeliApi implements KeliApi {
     }
     return CheckoutResult(
         type: 1, data: 'https://sp.huhu.icu/#/order/$tradeNo');
+  }
+
+  @override
+  Future<int> checkOrder({
+    required String tradeNo,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    return 0;
+  }
+
+  @override
+  Future<void> cancelOrder({
+    required String tradeNo,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 180));
   }
 
   @override

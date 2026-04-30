@@ -206,7 +206,7 @@ class AppController extends ChangeNotifier {
       if (paymentMethods.isNotEmpty &&
           !paymentMethods
               .any((method) => method.id == selectedPaymentMethodId)) {
-        selectedPaymentMethodId = paymentMethods.first.id;
+        selectedPaymentMethodId = defaultPaymentMethodId(paymentMethods);
       }
       _log('INFO', '商店套餐已更新，套餐 ${storePlans.length} 个');
     } catch (error) {
@@ -241,6 +241,106 @@ class AppController extends ChangeNotifier {
     return api.previewUpgrade(targetPlanId: plan.id, period: period.period);
   }
 
+  Future<String> createPlanOrder(
+    StorePlan plan,
+    PlanPeriodOption period,
+  ) async {
+    if (isPurchasing) {
+      throw const ApiException('正在处理上一个订单');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      final tradeNo =
+          await api.createOrder(planId: plan.id, period: period.period);
+      _log('INFO', '订单已创建: $tradeNo');
+      return tradeNo;
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '创建订单失败: $error');
+      rethrow;
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String> createUpgradeOrder({required String quoteToken}) async {
+    if (isPurchasing) {
+      throw const ApiException('正在处理上一个订单');
+    }
+    if (quoteToken.trim().isEmpty) {
+      throw const ApiException('请先完成升级预览');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      final tradeNo = await api.confirmUpgrade(quoteToken: quoteToken);
+      _log('INFO', '升级订单已创建: $tradeNo');
+      return tradeNo;
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '创建升级订单失败: $error');
+      rethrow;
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<PurchaseResult> payOrder({
+    required String tradeNo,
+    String? paymentMethodId,
+    bool allowNoPaymentMethod = false,
+    String successMessage = '支付成功，套餐已刷新',
+    String externalMessage = '正在打开支付页面',
+  }) async {
+    if (isPurchasing) {
+      return const PurchaseResult(message: '正在处理上一个订单');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      return await _checkoutTradeNo(
+        tradeNo: tradeNo,
+        paymentMethodId: paymentMethodId,
+        allowNoPaymentMethod: allowNoPaymentMethod,
+        successMessage: successMessage,
+        externalMessage: externalMessage,
+      );
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '支付订单失败: $error');
+      return PurchaseResult(message: '支付失败: $error', tradeNo: tradeNo);
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> cancelStoreOrder(String tradeNo) async {
+    if (tradeNo.trim().isEmpty) {
+      return;
+    }
+    try {
+      await api.cancelOrder(tradeNo: tradeNo);
+      _log('INFO', '订单已取消: $tradeNo');
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '取消订单失败: $error');
+      rethrow;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<int> checkStoreOrder(String tradeNo) {
+    return api.checkOrder(tradeNo: tradeNo);
+  }
+
   Future<PurchaseResult> purchasePlan(
     StorePlan plan,
     PlanPeriodOption period, {
@@ -256,10 +356,10 @@ class AppController extends ChangeNotifier {
       final tradeNo =
           await api.createOrder(planId: plan.id, period: period.period);
       _log('INFO', '订单已创建: $tradeNo');
-      return _checkoutTradeNo(
+      return await _checkoutTradeNo(
         tradeNo: tradeNo,
-        period: period,
         paymentMethodId: paymentMethodId,
+        allowNoPaymentMethod: period.priceCents <= 0,
         successMessage: '购买成功，套餐已刷新',
         externalMessage: '订单已创建，正在打开支付页面',
       );
@@ -292,11 +392,10 @@ class AppController extends ChangeNotifier {
     try {
       final tradeNo = await api.confirmUpgrade(quoteToken: quoteToken);
       _log('INFO', '升级订单已创建: $tradeNo');
-      return _checkoutTradeNo(
+      return await _checkoutTradeNo(
         tradeNo: tradeNo,
-        period: period,
         paymentMethodId: paymentMethodId,
-        payableAmountCents: payableAmountCents,
+        allowNoPaymentMethod: false,
         successMessage: '升级成功，套餐已刷新',
         externalMessage: '升级订单已创建，正在打开支付页面',
       );
@@ -312,11 +411,10 @@ class AppController extends ChangeNotifier {
 
   Future<PurchaseResult> _checkoutTradeNo({
     required String tradeNo,
-    required PlanPeriodOption period,
     required String? paymentMethodId,
+    required bool allowNoPaymentMethod,
     required String successMessage,
     required String externalMessage,
-    int? payableAmountCents,
   }) async {
     PaymentMethod? selectedMethod;
     final methodId = paymentMethodId ?? selectedPaymentMethodId;
@@ -326,10 +424,19 @@ class AppController extends ChangeNotifier {
         break;
       }
     }
-    final amountCents = payableAmountCents ?? period.priceCents;
-    if (selectedMethod == null && amountCents > 0) {
+    if (selectedMethod == null) {
+      if (allowNoPaymentMethod) {
+        final checkout = await api.checkoutOrder(
+          tradeNo: tradeNo,
+          method: '',
+        );
+        if (checkout.type == -1) {
+          await bootstrap();
+          return PurchaseResult(message: successMessage, tradeNo: tradeNo);
+        }
+      }
       return PurchaseResult(
-        message: '订单已创建，请复制订单号到面板支付',
+        message: '请选择支付方式，或复制订单号到面板支付',
         tradeNo: tradeNo,
         copyText: tradeNo,
       );
@@ -337,7 +444,7 @@ class AppController extends ChangeNotifier {
 
     final checkout = await api.checkoutOrder(
       tradeNo: tradeNo,
-      method: selectedMethod?.id ?? '',
+      method: selectedMethod.id,
     );
 
     if (checkout.type == -1) {
@@ -510,6 +617,18 @@ class AppController extends ChangeNotifier {
       logs.removeRange(200, logs.length);
     }
   }
+}
+
+String? defaultPaymentMethodId(List<PaymentMethod> methods) {
+  if (methods.isEmpty) {
+    return null;
+  }
+  for (final method in methods) {
+    if (method.payment != 'balance') {
+      return method.id;
+    }
+  }
+  return methods.first.id;
 }
 
 String? checkoutExternalUrl(Object? data) {
