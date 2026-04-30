@@ -210,7 +210,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<PurchaseResult> purchasePlan(
-      StorePlan plan, PlanPeriodOption period) async {
+    StorePlan plan,
+    PlanPeriodOption period, {
+    String? paymentMethodId,
+  }) async {
     if (isPurchasing) {
       return const PurchaseResult(message: '正在处理上一个订单');
     }
@@ -223,8 +226,9 @@ class AppController extends ChangeNotifier {
       _log('INFO', '订单已创建: $tradeNo');
 
       PaymentMethod? selectedMethod;
+      final methodId = paymentMethodId ?? selectedPaymentMethodId;
       for (final method in paymentMethods) {
-        if (method.id == selectedPaymentMethodId) {
+        if (method.id == methodId) {
           selectedMethod = method;
           break;
         }
@@ -232,6 +236,7 @@ class AppController extends ChangeNotifier {
       if (selectedMethod == null && period.priceCents > 0) {
         return PurchaseResult(
           message: '订单已创建，请复制订单号到面板支付',
+          tradeNo: tradeNo,
           copyText: tradeNo,
         );
       }
@@ -243,21 +248,24 @@ class AppController extends ChangeNotifier {
 
       if (checkout.type == -1) {
         await bootstrap();
-        return const PurchaseResult(message: '购买成功，套餐已刷新');
+        return PurchaseResult(message: '购买成功，套餐已刷新', tradeNo: tradeNo);
       }
 
       final data = checkout.data;
       if (checkout.type == 1 && data is String && data.isNotEmpty) {
-        return PurchaseResult(message: '订单已创建，正在打开支付页面', externalUrl: data);
+        return PurchaseResult(
+            message: '订单已创建，正在打开支付页面', tradeNo: tradeNo, externalUrl: data);
       }
 
       final paymentText = checkoutDataText(data);
       if (checkout.type == 0 && paymentText.isNotEmpty) {
-        return PurchaseResult(message: '订单已创建，支付信息已复制', copyText: paymentText);
+        return PurchaseResult(
+            message: '订单已创建，支付信息已复制', tradeNo: tradeNo, copyText: paymentText);
       }
 
       return PurchaseResult(
         message: '订单已创建，请复制订单号到面板支付',
+        tradeNo: tradeNo,
         copyText: tradeNo,
       );
     } catch (error) {

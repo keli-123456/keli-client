@@ -206,11 +206,13 @@ class CheckoutResult {
 class PurchaseResult {
   const PurchaseResult({
     required this.message,
+    this.tradeNo,
     this.externalUrl,
     this.copyText,
   });
 
   final String message;
+  final String? tradeNo;
   final String? externalUrl;
   final String? copyText;
 }

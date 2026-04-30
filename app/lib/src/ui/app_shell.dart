@@ -2264,14 +2264,14 @@ class _StoreTabButton extends StatelessWidget {
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-              color: selected ? keliInk : Colors.transparent,
+              color: selected ? keliBlueStrong : Colors.transparent,
               width: 1.5,
             ),
           ),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 17, color: selected ? keliInk : keliMuted),
+            Icon(icon, size: 17, color: selected ? keliBlueStrong : keliMuted),
             const SizedBox(width: 8),
             Text(
               label,
@@ -2519,8 +2519,7 @@ class _DarkTinyButton extends StatelessWidget {
     return FilledButton(
       onPressed: onTap,
       style: FilledButton.styleFrom(
-        backgroundColor:
-            active ? const Color(0xFF0F172A) : const Color(0xFFEFF3F8),
+        backgroundColor: active ? keliBlueStrong : const Color(0xFFEFF3F8),
         foregroundColor: active ? Colors.white : keliInk,
         minimumSize: const Size(84, 36),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
@@ -2636,7 +2635,7 @@ class _PlanChoiceButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected ? keliInk : keliLine,
+              color: selected ? keliBlueStrong : keliLine,
               width: selected ? 1.2 : 1,
             ),
           ),
@@ -2831,7 +2830,7 @@ class _StorePricingCard extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E2A8A),
+                color: keliBlueStrong,
                 borderRadius: BorderRadius.circular(3),
               ),
               child: Text(option.label,
@@ -2899,9 +2898,14 @@ class _StorePricingCard extends StatelessWidget {
             child: FilledButton(
               onPressed: controller.isPurchasing
                   ? null
-                  : () => handlePlanPurchase(context, controller, plan, option),
+                  : () => showCheckoutDialog(
+                        context,
+                        controller,
+                        plan,
+                        option,
+                      ),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF0F172A),
+                backgroundColor: keliBlueStrong,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(5)),
@@ -2932,7 +2936,7 @@ class _PlanSpecRow extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         children: [
-          Icon(icon, size: 15, color: const Color(0xFF1E2A8A)),
+          Icon(icon, size: 15, color: keliBlueStrong),
           const SizedBox(width: 8),
           Text('$label：',
               style: const TextStyle(
@@ -2950,6 +2954,627 @@ class _PlanSpecRow extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> showCheckoutDialog(
+  BuildContext context,
+  AppController controller,
+  StorePlan plan,
+  PlanPeriodOption option,
+) {
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: !controller.isPurchasing,
+    builder: (_) => _CheckoutDialog(
+      controller: controller,
+      plan: plan,
+      option: option,
+    ),
+  );
+}
+
+class _CheckoutDialog extends StatefulWidget {
+  const _CheckoutDialog({
+    required this.controller,
+    required this.plan,
+    required this.option,
+  });
+
+  final AppController controller;
+  final StorePlan plan;
+  final PlanPeriodOption option;
+
+  @override
+  State<_CheckoutDialog> createState() => _CheckoutDialogState();
+}
+
+class _CheckoutDialogState extends State<_CheckoutDialog> {
+  String? methodId;
+  bool submitting = false;
+  bool refreshing = false;
+  PurchaseResult? result;
+  String? resultDetail;
+  bool resultIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final methods = widget.controller.paymentMethods;
+    final current = widget.controller.selectedPaymentMethodId;
+    methodId = methods.any((method) => method.id == current)
+        ? current
+        : methods.isEmpty
+            ? null
+            : methods.first.id;
+  }
+
+  Future<void> submit() async {
+    if (submitting) {
+      return;
+    }
+
+    setState(() {
+      submitting = true;
+      result = null;
+      resultDetail = null;
+      resultIsError = false;
+    });
+
+    if (methodId != null) {
+      widget.controller.selectPaymentMethod(methodId);
+    }
+
+    final purchase = await widget.controller.purchasePlan(
+      widget.plan,
+      widget.option,
+      paymentMethodId: methodId,
+    );
+
+    var detail = '';
+    if (purchase.copyText != null) {
+      await Clipboard.setData(ClipboardData(text: purchase.copyText!));
+      detail = '支付信息或订单号已复制到剪贴板';
+    }
+    if (purchase.externalUrl != null && mounted) {
+      final opened = await openExternalUrl(purchase.externalUrl!);
+      if (opened) {
+        detail = '支付页面已打开，完成后可回到客户端刷新套餐';
+      } else {
+        await Clipboard.setData(ClipboardData(text: purchase.externalUrl!));
+        detail = '支付链接打开失败，已复制到剪贴板';
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      submitting = false;
+      result = purchase;
+      resultDetail = detail.isEmpty ? null : detail;
+      resultIsError = purchase.message.startsWith('购买失败');
+    });
+  }
+
+  Future<void> refreshAccount() async {
+    setState(() => refreshing = true);
+    await widget.controller.bootstrap();
+    if (!mounted) {
+      return;
+    }
+    setState(() => refreshing = false);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('套餐和节点已刷新')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final methods = widget.controller.paymentMethods;
+    final canPay =
+        widget.option.priceCents <= 0 || methods.isEmpty || methodId != null;
+    final buttonText = methods.isEmpty && widget.option.priceCents > 0
+        ? '创建订单并复制订单号'
+        : '创建订单并支付';
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: Colors.white,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: keliBlueSoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.shopping_bag_outlined,
+                              color: keliBlueStrong, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('确认订单',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900)),
+                              SizedBox(height: 2),
+                              Text('核对套餐、选择支付方式后创建订单',
+                                  style: TextStyle(
+                                      color: keliMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed:
+                              submitting ? null : () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const _CheckoutSteps(),
+                    const SizedBox(height: 16),
+                    _CheckoutSummary(
+                      plan: widget.plan,
+                      option: widget.option,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('支付方式',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 10),
+                    if (methods.isEmpty)
+                      const _CheckoutInfoBox(
+                        icon: Icons.info_outline,
+                        title: '暂无可选支付方式',
+                        message: '客户端会先创建订单，并复制订单号供你到面板支付。',
+                      )
+                    else
+                      Column(
+                        children: [
+                          for (final method in methods) ...[
+                            _PaymentMethodTile(
+                              method: method,
+                              selected: method.id == methodId,
+                              onTap: submitting
+                                  ? null
+                                  : () => setState(() => methodId = method.id),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ],
+                      ),
+                    const SizedBox(height: 14),
+                    if (result != null) ...[
+                      _CheckoutResultBox(
+                        result: result!,
+                        detail: resultDetail,
+                        isError: resultIsError,
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final closeButton = OutlinedButton(
+                          onPressed:
+                              submitting ? null : () => Navigator.pop(context),
+                          child: const Text('关闭'),
+                        );
+                        final refreshButton = result != null && !resultIsError
+                            ? OutlinedButton.icon(
+                                onPressed: refreshing ? null : refreshAccount,
+                                icon: refreshing
+                                    ? const SizedBox(
+                                        width: 15,
+                                        height: 15,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.refresh, size: 17),
+                                label: Text(refreshing ? '刷新中' : '刷新套餐'),
+                              )
+                            : null;
+                        final submitButton = FilledButton.icon(
+                          onPressed: !canPay || submitting ? null : submit,
+                          icon: submitting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.payment_outlined, size: 17),
+                          label: Text(submitting ? '处理中' : buttonText),
+                        );
+
+                        if (constraints.maxWidth < 430) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              submitButton,
+                              if (refreshButton != null) ...[
+                                const SizedBox(height: 8),
+                                refreshButton,
+                              ],
+                              const SizedBox(height: 8),
+                              closeButton,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(child: closeButton),
+                            if (refreshButton != null) ...[
+                              const SizedBox(width: 10),
+                              Expanded(child: refreshButton),
+                            ],
+                            const SizedBox(width: 10),
+                            Expanded(flex: 2, child: submitButton),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckoutSteps extends StatelessWidget {
+  const _CheckoutSteps();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFE),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        children: const [
+          _CheckoutStep(index: '1', label: '确认订单', active: true),
+          _CheckoutConnector(),
+          _CheckoutStep(index: '2', label: '选择支付', active: true),
+          _CheckoutConnector(),
+          _CheckoutStep(index: '3', label: '完成刷新', active: false),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckoutStep extends StatelessWidget {
+  const _CheckoutStep({
+    required this.index,
+    required this.label,
+    required this.active,
+  });
+
+  final String index;
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: active ? keliBlueStrong : const Color(0xFFE8EDF5),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(index,
+                style: TextStyle(
+                    color: active ? Colors.white : keliMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900)),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                color: active ? keliInk : keliMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w900)),
+      ],
+    );
+  }
+}
+
+class _CheckoutConnector extends StatelessWidget {
+  const _CheckoutConnector();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Expanded(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Divider(height: 1, color: keliLine),
+      ),
+    );
+  }
+}
+
+class _CheckoutSummary extends StatelessWidget {
+  const _CheckoutSummary({
+    required this.plan,
+    required this.option,
+  });
+
+  final StorePlan plan;
+  final PlanPeriodOption option;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: keliBlueSoft.withValues(alpha: 0.52),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFCFE3FF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(plan.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 4),
+                    Text('${option.label} · ${monthlyPriceText(option)}',
+                        style: const TextStyle(
+                            color: keliMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+              Text(priceText(option.priceCents),
+                  style: const TextStyle(
+                      color: keliBlueStrong,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _CheckoutSummaryLine(label: '可用流量', value: plan.trafficLabel),
+          _CheckoutSummaryLine(
+              label: '允许设备',
+              value: plan.deviceLimit == null || plan.deviceLimit == 0
+                  ? '无限制'
+                  : '${plan.deviceLimit} 台'),
+          _CheckoutSummaryLine(
+              label: '最高网速',
+              value: plan.speedLimit == null || plan.speedLimit == 0
+                  ? '无限制'
+                  : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckoutSummaryLine extends StatelessWidget {
+  const _CheckoutSummaryLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: keliMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+          const Spacer(),
+          Text(value,
+              style: const TextStyle(
+                  color: keliInk, fontSize: 12, fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaymentMethodTile extends StatelessWidget {
+  const _PaymentMethodTile({
+    required this.method,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final PaymentMethod method;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? keliBlueSoft : Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: selected ? const Color(0xFFCFE3FF) : keliLineSoft),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: selected ? keliBlueStrong : keliMuted,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(method.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
+              ),
+              Text(method.payment,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: keliMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckoutInfoBox extends StatelessWidget {
+  const _CheckoutInfoBox({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFE),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: keliLineSoft),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: keliBlueStrong, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                const SizedBox(height: 3),
+                Text(message,
+                    style: const TextStyle(
+                        color: keliMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckoutResultBox extends StatelessWidget {
+  const _CheckoutResultBox({
+    required this.result,
+    required this.detail,
+    required this.isError,
+  });
+
+  final PurchaseResult result;
+  final String? detail;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isError ? keliRed : keliGreen;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(isError ? Icons.error_outline : Icons.check_circle_outline,
+                  size: 18, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(result.message,
+                    style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13)),
+              ),
+            ],
+          ),
+          if (result.tradeNo != null) ...[
+            const SizedBox(height: 8),
+            SelectableText('订单号：${result.tradeNo}',
+                style: const TextStyle(
+                    color: keliInk, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+          if (detail != null) ...[
+            const SizedBox(height: 6),
+            Text(detail!,
+                style: const TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ],
         ],
       ),
     );
