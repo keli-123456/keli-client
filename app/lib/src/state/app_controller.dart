@@ -647,6 +647,7 @@ class AppController extends ChangeNotifier {
     _log('INFO', '开始测试节点延迟');
     notifyListeners();
     final updated = <ProxyNode>[];
+    final failures = <String, List<String>>{};
     var measured = 0;
     try {
       for (final node in nodes) {
@@ -660,7 +661,8 @@ class AppController extends ChangeNotifier {
           latency = await coreManager.testLatency(node,
               config: config, mode: proxyMode);
         } catch (error) {
-          _log('WARN', '节点 ${node.name} 测速失败: $error');
+          final reason = latencyFailureReason(error);
+          failures.putIfAbsent(reason, () => <String>[]).add(node.name);
         }
         if (latency != null) {
           measured++;
@@ -669,9 +671,12 @@ class AppController extends ChangeNotifier {
       }
       nodes = updated;
       if (measured == 0) {
-        _log('WARN', '真实节点测速未成功，请查看日志里的具体节点错误');
+        _log('WARN', '真实节点测速未成功：${latencyFailureSummary(failures)}');
       } else {
         _log('INFO', '延迟测试完成，成功 $measured/${nodes.length} 个');
+        if (failures.isNotEmpty) {
+          _log('WARN', '部分节点测速未成功：${latencyFailureSummary(failures)}');
+        }
       }
     } finally {
       isTestingLatency = false;
@@ -795,6 +800,40 @@ class AppController extends ChangeNotifier {
       logs.removeRange(200, logs.length);
     }
   }
+}
+
+String latencyFailureReason(Object error) {
+  final message = '$error';
+  if (message.contains('HTTP 404')) {
+    return '核心 API 未返回该代理';
+  }
+  if (message.contains('HTTP 408') ||
+      message.contains('HTTP 504') ||
+      message.contains('TimeoutException') ||
+      message.contains('Timeout')) {
+    return '节点超时';
+  }
+  if (message.contains('Clash API 未就绪')) {
+    return '核心 API 未就绪';
+  }
+  if (message.contains('缺少真实节点出站')) {
+    return '配置缺少出站';
+  }
+  if (message.contains('测速进程已退出')) {
+    return '测速核心启动失败';
+  }
+  return '其他错误';
+}
+
+String latencyFailureSummary(Map<String, List<String>> failures) {
+  if (failures.isEmpty) {
+    return '无具体错误';
+  }
+  return failures.entries.map((entry) {
+    final samples = entry.value.take(3).join('、');
+    final suffix = entry.value.length > 3 ? ' 等' : '';
+    return '${entry.key} ${entry.value.length} 个（$samples$suffix）';
+  }).join('；');
 }
 
 String byteRateText(int bytesPerSecond) {
