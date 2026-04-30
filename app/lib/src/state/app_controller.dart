@@ -7,6 +7,22 @@ import '../services/core_manager.dart';
 import '../services/keli_api.dart';
 import '../services/session_store.dart';
 
+const int latencyTestConcurrency = 4;
+
+class _LatencyMeasurement {
+  const _LatencyMeasurement({
+    required this.index,
+    required this.node,
+    required this.latencyMs,
+    required this.failureReason,
+  });
+
+  final int index;
+  final ProxyNode node;
+  final int? latencyMs;
+  final String? failureReason;
+}
+
 class AppController extends ChangeNotifier {
   AppController({
     required this.api,
@@ -644,30 +660,41 @@ class AppController extends ChangeNotifier {
       return;
     }
     isTestingLatency = true;
-    _log('INFO', '开始测试节点延迟');
+    _log('INFO', '开始测试节点延迟，并发 $latencyTestConcurrency 个');
     notifyListeners();
-    final updated = <ProxyNode>[];
+    final snapshot = List<ProxyNode>.of(nodes);
+    final updated = List<ProxyNode>.of(snapshot);
     final failures = <String, List<String>>{};
     var measured = 0;
     try {
-      for (final node in nodes) {
-        int? latency;
-        try {
-          latency = await _measureNodeLatency(node);
-        } catch (error) {
-          final reason = latencyFailureReason(error);
-          failures.putIfAbsent(reason, () => <String>[]).add(node.name);
+      for (var start = 0;
+          start < snapshot.length;
+          start += latencyTestConcurrency) {
+        final end = start + latencyTestConcurrency > snapshot.length
+            ? snapshot.length
+            : start + latencyTestConcurrency;
+        final results = await Future.wait([
+          for (var index = start; index < end; index++)
+            _measureNodeLatencyResult(index, snapshot[index]),
+        ]);
+        for (final result in results) {
+          if (result.latencyMs != null) {
+            measured++;
+          } else if (result.failureReason != null) {
+            failures
+                .putIfAbsent(result.failureReason!, () => <String>[])
+                .add(result.node.name);
+          }
+          updated[result.index] =
+              result.node.copyWith(latencyMs: result.latencyMs);
         }
-        if (latency != null) {
-          measured++;
-        }
-        updated.add(node.copyWith(latencyMs: latency));
+        nodes = List<ProxyNode>.of(updated);
+        notifyListeners();
       }
-      nodes = updated;
       if (measured == 0) {
         _log('WARN', '真实节点测速未成功：${latencyFailureSummary(failures)}');
       } else {
-        _log('INFO', '延迟测试完成，成功 $measured/${nodes.length} 个');
+        _log('INFO', '延迟测试完成，成功 $measured/${snapshot.length} 个');
         if (failures.isNotEmpty) {
           _log('WARN', '部分节点测速未成功：${latencyFailureSummary(failures)}');
         }
@@ -675,6 +702,28 @@ class AppController extends ChangeNotifier {
     } finally {
       isTestingLatency = false;
       notifyListeners();
+    }
+  }
+
+  Future<_LatencyMeasurement> _measureNodeLatencyResult(
+    int index,
+    ProxyNode node,
+  ) async {
+    try {
+      final latency = await _measureNodeLatency(node);
+      return _LatencyMeasurement(
+        index: index,
+        node: node,
+        latencyMs: latency,
+        failureReason: latency == null ? '未返回延迟' : null,
+      );
+    } catch (error) {
+      return _LatencyMeasurement(
+        index: index,
+        node: node,
+        latencyMs: null,
+        failureReason: latencyFailureReason(error),
+      );
     }
   }
 

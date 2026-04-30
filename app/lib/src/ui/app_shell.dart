@@ -481,7 +481,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.9',
+            Text('v0.1.10',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
