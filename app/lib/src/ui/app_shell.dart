@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -481,7 +482,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.10',
+            Text('v0.1.11',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -915,6 +916,8 @@ class _SelectedNodeCard extends StatelessWidget {
       ),
       child: Row(
         children: [
+          _NodeFlagIcon(node: node, selected: true, size: 34),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -934,6 +937,419 @@ class _SelectedNodeCard extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _NodeFlag {
+  australia,
+  canada,
+  china,
+  france,
+  germany,
+  hongKong,
+  japan,
+  netherlands,
+  singapore,
+  southKorea,
+  taiwan,
+  unitedKingdom,
+  unitedStates,
+}
+
+class _NodeFlagIcon extends StatelessWidget {
+  const _NodeFlagIcon({
+    required this.node,
+    this.selected = false,
+    this.size = 34,
+  });
+
+  final ProxyNode? node;
+  final bool selected;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final flag = _nodeFlag(node);
+    final radius = BorderRadius.circular(size * 0.27);
+    if (flag == null) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: selected ? keliBlueStrong : const Color(0xFFF2F5F9),
+          borderRadius: radius,
+        ),
+        child: Icon(
+          Icons.public,
+          color: selected ? Colors.white : keliMuted,
+          size: size * 0.55,
+        ),
+      );
+    }
+
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: radius,
+        border: Border.all(
+          color:
+              selected ? keliBlueStrong.withValues(alpha: 0.32) : keliLineSoft,
+        ),
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  color: keliBlueStrong.withValues(alpha: 0.12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(size * 0.20),
+        child: CustomPaint(
+          painter: _NodeFlagPainter(flag),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+}
+
+class _NodeFlagPainter extends CustomPainter {
+  const _NodeFlagPainter(this.flag);
+
+  final _NodeFlag flag;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final paint = Paint()..isAntiAlias = true;
+
+    void fill(Color color, [Rect? target]) {
+      paint
+        ..color = color
+        ..style = PaintingStyle.fill;
+      canvas.drawRect(target ?? rect, paint);
+    }
+
+    void horizontalStripes(List<Color> colors) {
+      final stripeHeight = size.height / colors.length;
+      for (var i = 0; i < colors.length; i += 1) {
+        fill(
+          colors[i],
+          Rect.fromLTWH(0, stripeHeight * i, size.width, stripeHeight),
+        );
+      }
+    }
+
+    void verticalStripes(List<Color> colors) {
+      final stripeWidth = size.width / colors.length;
+      for (var i = 0; i < colors.length; i += 1) {
+        fill(
+          colors[i],
+          Rect.fromLTWH(stripeWidth * i, 0, stripeWidth, size.height),
+        );
+      }
+    }
+
+    switch (flag) {
+      case _NodeFlag.japan:
+        fill(Colors.white);
+        paint.color = const Color(0xFFBC002D);
+        canvas.drawCircle(
+            size.center(Offset.zero), size.shortestSide * 0.27, paint);
+      case _NodeFlag.unitedStates:
+        final stripeHeight = size.height / 13;
+        fill(Colors.white);
+        for (var i = 0; i < 13; i += 2) {
+          fill(
+            const Color(0xFFB22234),
+            Rect.fromLTWH(0, stripeHeight * i, size.width, stripeHeight),
+          );
+        }
+        fill(
+          const Color(0xFF3C3B6E),
+          Rect.fromLTWH(0, 0, size.width * 0.48, stripeHeight * 7),
+        );
+        paint.color = Colors.white;
+        for (var y = 0; y < 4; y += 1) {
+          for (var x = 0; x < 5; x += 1) {
+            canvas.drawCircle(
+              Offset(size.width * (0.08 + x * 0.08),
+                  size.height * (0.08 + y * 0.11)),
+              size.shortestSide * 0.018,
+              paint,
+            );
+          }
+        }
+      case _NodeFlag.singapore:
+        fill(Colors.white);
+        fill(
+          const Color(0xFFEF3340),
+          Rect.fromLTWH(0, 0, size.width, size.height / 2),
+        );
+        paint.color = Colors.white;
+        canvas.drawCircle(
+          Offset(size.width * 0.30, size.height * 0.25),
+          size.shortestSide * 0.13,
+          paint,
+        );
+        paint.color = const Color(0xFFEF3340);
+        canvas.drawCircle(
+          Offset(size.width * 0.35, size.height * 0.25),
+          size.shortestSide * 0.11,
+          paint,
+        );
+        paint.color = Colors.white;
+        for (var i = 0; i < 5; i += 1) {
+          canvas.drawCircle(
+            Offset(
+              size.width * (0.47 + (i % 2) * 0.06),
+              size.height * (0.14 + i * 0.045),
+            ),
+            size.shortestSide * 0.018,
+            paint,
+          );
+        }
+      case _NodeFlag.germany:
+        horizontalStripes(
+          const [Color(0xFF000000), Color(0xFFDD0000), Color(0xFFFFCE00)],
+        );
+      case _NodeFlag.netherlands:
+        horizontalStripes(
+          const [Color(0xFFAE1C28), Colors.white, Color(0xFF21468B)],
+        );
+      case _NodeFlag.hongKong:
+        fill(const Color(0xFFDE2910));
+        paint.color = Colors.white;
+        final center = size.center(Offset.zero);
+        for (var i = 0; i < 5; i += 1) {
+          final angle = (-90 + i * 72) * 3.141592653589793 / 180;
+          canvas.drawOval(
+            Rect.fromCenter(
+              center: Offset(
+                center.dx + size.width * 0.16 * math.cos(angle),
+                center.dy + size.height * 0.16 * math.sin(angle),
+              ),
+              width: size.width * 0.18,
+              height: size.height * 0.08,
+            ),
+            paint,
+          );
+        }
+      case _NodeFlag.taiwan:
+        fill(const Color(0xFFFE0000));
+        fill(
+          const Color(0xFF000095),
+          Rect.fromLTWH(0, 0, size.width * 0.56, size.height * 0.58),
+        );
+        paint.color = Colors.white;
+        canvas.drawCircle(
+          Offset(size.width * 0.28, size.height * 0.29),
+          size.shortestSide * 0.12,
+          paint,
+        );
+      case _NodeFlag.china:
+        fill(const Color(0xFFDE2910));
+        paint.color = const Color(0xFFFFDE00);
+        canvas.drawCircle(
+          Offset(size.width * 0.27, size.height * 0.28),
+          size.shortestSide * 0.09,
+          paint,
+        );
+        for (final offset in const [
+          Offset(0.43, 0.16),
+          Offset(0.51, 0.28),
+          Offset(0.50, 0.42),
+          Offset(0.40, 0.52),
+        ]) {
+          canvas.drawCircle(
+            Offset(size.width * offset.dx, size.height * offset.dy),
+            size.shortestSide * 0.035,
+            paint,
+          );
+        }
+      case _NodeFlag.unitedKingdom:
+        fill(const Color(0xFF012169));
+        paint
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.square
+          ..color = Colors.white
+          ..strokeWidth = size.shortestSide * 0.20;
+        canvas.drawLine(Offset.zero, Offset(size.width, size.height), paint);
+        canvas.drawLine(Offset(size.width, 0), Offset(0, size.height), paint);
+        paint
+          ..color = const Color(0xFFC8102E)
+          ..strokeWidth = size.shortestSide * 0.09;
+        canvas.drawLine(Offset.zero, Offset(size.width, size.height), paint);
+        canvas.drawLine(Offset(size.width, 0), Offset(0, size.height), paint);
+        paint
+          ..color = Colors.white
+          ..strokeWidth = size.shortestSide * 0.24;
+        canvas.drawLine(Offset(size.width / 2, 0),
+            Offset(size.width / 2, size.height), paint);
+        canvas.drawLine(Offset(0, size.height / 2),
+            Offset(size.width, size.height / 2), paint);
+        paint
+          ..color = const Color(0xFFC8102E)
+          ..strokeWidth = size.shortestSide * 0.13;
+        canvas.drawLine(Offset(size.width / 2, 0),
+            Offset(size.width / 2, size.height), paint);
+        canvas.drawLine(Offset(0, size.height / 2),
+            Offset(size.width, size.height / 2), paint);
+      case _NodeFlag.france:
+        verticalStripes(
+          const [Color(0xFF002654), Colors.white, Color(0xFFED2939)],
+        );
+      case _NodeFlag.southKorea:
+        fill(Colors.white);
+        paint.color = const Color(0xFFCD2E3A);
+        canvas.drawCircle(
+          Offset(size.width * 0.50, size.height * 0.43),
+          size.shortestSide * 0.16,
+          paint,
+        );
+        paint.color = const Color(0xFF0047A0);
+        canvas.drawCircle(
+          Offset(size.width * 0.50, size.height * 0.57),
+          size.shortestSide * 0.16,
+          paint,
+        );
+      case _NodeFlag.canada:
+        verticalStripes(
+          const [Color(0xFFFF0000), Colors.white, Color(0xFFFF0000)],
+        );
+        paint.color = const Color(0xFFFF0000);
+        final path = Path()
+          ..moveTo(size.width * 0.50, size.height * 0.23)
+          ..lineTo(size.width * 0.59, size.height * 0.43)
+          ..lineTo(size.width * 0.70, size.height * 0.39)
+          ..lineTo(size.width * 0.62, size.height * 0.55)
+          ..lineTo(size.width * 0.70, size.height * 0.63)
+          ..lineTo(size.width * 0.55, size.height * 0.64)
+          ..lineTo(size.width * 0.50, size.height * 0.78)
+          ..lineTo(size.width * 0.45, size.height * 0.64)
+          ..lineTo(size.width * 0.30, size.height * 0.63)
+          ..lineTo(size.width * 0.38, size.height * 0.55)
+          ..lineTo(size.width * 0.30, size.height * 0.39)
+          ..lineTo(size.width * 0.41, size.height * 0.43)
+          ..close();
+        canvas.drawPath(path, paint);
+      case _NodeFlag.australia:
+        fill(const Color(0xFF012169));
+        paint.color = Colors.white;
+        for (final offset in const [
+          Offset(0.68, 0.25),
+          Offset(0.78, 0.45),
+          Offset(0.62, 0.65),
+          Offset(0.83, 0.72),
+        ]) {
+          canvas.drawCircle(
+            Offset(size.width * offset.dx, size.height * offset.dy),
+            size.shortestSide * 0.035,
+            paint,
+          );
+        }
+        fill(Colors.white,
+            Rect.fromLTWH(0, 0, size.width * 0.48, size.height * 0.12));
+        fill(Colors.white,
+            Rect.fromLTWH(0, 0, size.width * 0.12, size.height * 0.48));
+        fill(const Color(0xFFC8102E),
+            Rect.fromLTWH(0, 0, size.width * 0.48, size.height * 0.06));
+        fill(const Color(0xFFC8102E),
+            Rect.fromLTWH(0, 0, size.width * 0.06, size.height * 0.48));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NodeFlagPainter oldDelegate) {
+    return oldDelegate.flag != flag;
+  }
+}
+
+_NodeFlag? _nodeFlag(ProxyNode? node) {
+  final raw = node?.name.trim() ?? '';
+  if (raw.isEmpty) {
+    return null;
+  }
+  final lower = raw.toLowerCase();
+
+  bool hasText(List<String> values) {
+    return values.any(raw.contains);
+  }
+
+  bool hasWord(List<String> values) {
+    return values.any((value) {
+      final escaped = RegExp.escape(value.toLowerCase());
+      return RegExp('(^|[^a-z0-9])$escaped([^a-z0-9]|\$)').hasMatch(lower);
+    });
+  }
+
+  if (hasText(['中国香港', '香港']) || hasWord(['hong kong', 'hk', 'hkg'])) {
+    return _NodeFlag.hongKong;
+  }
+  if (hasText(['台湾', '台灣']) || hasWord(['taiwan', 'tw', 'twn'])) {
+    return _NodeFlag.taiwan;
+  }
+  if (hasText(['日本', '东京', '東京', '大阪']) ||
+      hasWord(['japan', 'jp', 'jpn', 'tokyo', 'osaka'])) {
+    return _NodeFlag.japan;
+  }
+  if (hasText(
+          ['美国', '美國', '洛杉矶', '洛杉磯', '纽约', '紐約', '西雅图', '聖荷西', '圣何塞', '硅谷']) ||
+      hasWord([
+        'united states',
+        'america',
+        'usa',
+        'us',
+        'lax',
+        'los angeles',
+        'new york',
+        'seattle',
+        'sanjose',
+        'san jose',
+      ])) {
+    return _NodeFlag.unitedStates;
+  }
+  if (hasText(['新加坡']) || hasWord(['singapore', 'sg', 'sin'])) {
+    return _NodeFlag.singapore;
+  }
+  if (hasText(['德国', '德國', '法兰克福', '法蘭克福']) ||
+      hasWord(['germany', 'de', 'deu', 'bayern', 'frankfurt'])) {
+    return _NodeFlag.germany;
+  }
+  if (hasText(['荷兰', '荷蘭']) ||
+      hasWord(['netherlands', 'holland', 'nl', 'ams', 'amsterdam'])) {
+    return _NodeFlag.netherlands;
+  }
+  if (hasText(['英国', '英國', '伦敦', '倫敦']) ||
+      hasWord(['united kingdom', 'england', 'uk', 'gb', 'london'])) {
+    return _NodeFlag.unitedKingdom;
+  }
+  if (hasText(['法国', '法國', '巴黎']) || hasWord(['france', 'fr', 'paris'])) {
+    return _NodeFlag.france;
+  }
+  if (hasText(['韩国', '韓國', '首尔', '首爾']) ||
+      hasWord(['south korea', 'korea', 'kr', 'kor', 'seoul'])) {
+    return _NodeFlag.southKorea;
+  }
+  if (hasText(['加拿大', '多伦多', '多倫多', '温哥华', '溫哥華']) ||
+      hasWord(['canada', 'ca', 'toronto', 'vancouver'])) {
+    return _NodeFlag.canada;
+  }
+  if (hasText(['澳大利亚', '澳大利亞', '澳洲', '悉尼', '雪梨']) ||
+      hasWord(['australia', 'au', 'sydney'])) {
+    return _NodeFlag.australia;
+  }
+  if (hasText(['中国', '中國', '大陆', '大陸']) ||
+      hasWord(['china', 'cn', 'mainland'])) {
+    return _NodeFlag.china;
+  }
+
+  return null;
 }
 
 class _CurrentNodePanel extends StatelessWidget {
@@ -978,16 +1394,7 @@ class _CurrentNodePanel extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: keliBlueStrong,
-                        borderRadius: BorderRadius.circular(9),
-                      ),
-                      child: const Icon(Icons.public,
-                          color: Colors.white, size: 19),
-                    ),
+                    _NodeFlagIcon(node: n, selected: true),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -1207,16 +1614,7 @@ class _NodePickerRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: selected ? keliBlueStrong : const Color(0xFFF2F5F9),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Icon(Icons.public,
-                  color: selected ? Colors.white : keliMuted, size: 18),
-            ),
+            _NodeFlagIcon(node: node, selected: selected),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -2116,17 +2514,7 @@ class NodeRow extends StatelessWidget {
                         size: 20,
                       ),
                     ),
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color:
-                            selected ? keliBlueStrong : const Color(0xFFF2F5F9),
-                        borderRadius: BorderRadius.circular(9),
-                      ),
-                      child: Icon(Icons.public,
-                          color: selected ? Colors.white : keliMuted, size: 18),
-                    ),
+                    _NodeFlagIcon(node: node, selected: selected),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(node.name,
@@ -2190,16 +2578,7 @@ class NodeRow extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: selected ? keliBlueStrong : const Color(0xFFF2F5F9),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.public,
-                  color: selected ? Colors.white : keliMuted, size: 20),
-            ),
+            _NodeFlagIcon(node: node, selected: selected, size: 38),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
