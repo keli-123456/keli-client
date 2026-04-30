@@ -459,7 +459,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.4',
+            Text('v0.1.5',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -503,35 +503,34 @@ class HomeScreen extends StatelessWidget {
       children: [
         _DesktopAccountBar(profile: profile),
         const SizedBox(height: 12),
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                flex: 8,
-                child: Column(
-                  children: [
-                    _ConnectPanel(node: node),
-                    const SizedBox(height: 12),
-                    _RuntimeStrip(isDesktop: true),
-                  ],
-                ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 8,
+              child: Column(
+                children: [
+                  _ConnectPanel(node: node),
+                  const SizedBox(height: 12),
+                  _RuntimeStrip(isDesktop: true),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 5,
-                child: Column(
-                  children: [
-                    _CurrentNodePanel(node: node),
-                    const SizedBox(height: 12),
-                    const Expanded(
-                      child: _ModeAndRoutePanel(fillHeight: true),
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 5,
+              child: Column(
+                children: [
+                  _CurrentNodePanel(node: node),
+                  const SizedBox(height: 12),
+                  const SizedBox(
+                    height: 294,
+                    child: _ModeAndRoutePanel(fillHeight: true),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ],
     );
