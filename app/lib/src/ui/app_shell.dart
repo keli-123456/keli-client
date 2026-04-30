@@ -2029,22 +2029,7 @@ class _StoreScreenState extends State<StoreScreen> {
               : null,
         ),
         const SizedBox(height: 16),
-        if (isDesktop)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                  flex: 7, child: _StoreCatalogPanel(controller: controller)),
-              const SizedBox(width: 12),
-              Expanded(
-                  flex: 3, child: _StorePaymentPanel(controller: controller)),
-            ],
-          )
-        else ...[
-          _StoreCatalogPanel(controller: controller),
-          const SizedBox(height: 12),
-          _StorePaymentPanel(controller: controller),
-        ],
+        _StoreCatalogPanel(controller: controller),
         const SizedBox(height: 12),
         if (controller.storeError != null) ...[
           _InlineError(message: controller.storeError!),
@@ -2055,7 +2040,7 @@ class _StoreScreenState extends State<StoreScreen> {
   }
 }
 
-enum _StoreTab { plans, traffic }
+enum _StoreTab { plans, traffic, orders }
 
 class _StoreCatalogPanel extends StatefulWidget {
   const _StoreCatalogPanel({required this.controller});
@@ -2069,6 +2054,8 @@ class _StoreCatalogPanel extends StatefulWidget {
 class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
   _StoreTab tab = _StoreTab.plans;
   int? selectedPlanId;
+  int? selectedTrafficPlanId;
+  bool upgradeOnly = true;
 
   @override
   Widget build(BuildContext context) {
@@ -2103,126 +2090,334 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
       );
     }
 
-    if (tab == _StoreTab.traffic && trafficPlans.isEmpty) {
-      tab = _StoreTab.plans;
-    }
-
     final selectedPlan = selectedRecurringPlan(recurringPlans, selectedPlanId);
+    final selectedTrafficPlan =
+        selectedStorePlan(trafficPlans, selectedTrafficPlanId);
 
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StoreSelectionPanel(
+          tab: tab,
+          onTabChanged: (value) => setState(() => tab = value),
+          recurringPlans: recurringPlans,
+          trafficPlans: trafficPlans,
+          selectedPlan: selectedPlan,
+          selectedTrafficPlan: selectedTrafficPlan,
+          upgradeOnly: upgradeOnly,
+          onUpgradeOnlyChanged: (value) => setState(() => upgradeOnly = value),
+          onSelectPlan: (id) => setState(() => selectedPlanId = id),
+          onSelectTrafficPlan: (id) =>
+              setState(() => selectedTrafficPlanId = id),
+        ),
+        const SizedBox(height: 20),
+        if (tab == _StoreTab.plans)
+          _StorePeriodPanel(
+            title: selectedPlan == null
+                ? '包月套餐 - 请选择购买周期'
+                : '${selectedPlan.name} - 请选择购买周期',
+            plan: selectedPlan,
+            options: selectedPlan == null
+                ? const []
+                : recurringOptions(selectedPlan),
+            controller: controller,
+          )
+        else if (tab == _StoreTab.traffic)
+          _StorePeriodPanel(
+            title: selectedTrafficPlan == null
+                ? '按量付费 - 请选择购买方式'
+                : '${selectedTrafficPlan.name} - 请选择购买方式',
+            plan: selectedTrafficPlan,
+            options: selectedTrafficPlan == null
+                ? const []
+                : trafficOptions(selectedTrafficPlan),
+            controller: controller,
+            trafficMode: true,
+          )
+        else
+          _StoreOrdersPanel(controller: controller),
+      ],
+    );
+  }
+}
+
+class _StoreSelectionPanel extends StatelessWidget {
+  const _StoreSelectionPanel({
+    required this.tab,
+    required this.onTabChanged,
+    required this.recurringPlans,
+    required this.trafficPlans,
+    required this.selectedPlan,
+    required this.selectedTrafficPlan,
+    required this.upgradeOnly,
+    required this.onUpgradeOnlyChanged,
+    required this.onSelectPlan,
+    required this.onSelectTrafficPlan,
+  });
+
+  final _StoreTab tab;
+  final ValueChanged<_StoreTab> onTabChanged;
+  final List<StorePlan> recurringPlans;
+  final List<StorePlan> trafficPlans;
+  final StorePlan? selectedPlan;
+  final StorePlan? selectedTrafficPlan;
+  final bool upgradeOnly;
+  final ValueChanged<bool> onUpgradeOnlyChanged;
+  final ValueChanged<int> onSelectPlan;
+  final ValueChanged<int> onSelectTrafficPlan;
+
+  @override
+  Widget build(BuildContext context) {
     return KeliCard(
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                const Text('套餐购买',
-                    style:
-                        TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
-                if (trafficPlans.isNotEmpty)
-                  SegmentedButton<_StoreTab>(
-                    segments: const [
-                      ButtonSegment(
-                          value: _StoreTab.plans,
-                          icon: Icon(Icons.workspace_premium_outlined),
-                          label: Text('订阅套餐')),
-                      ButtonSegment(
-                          value: _StoreTab.traffic,
-                          icon: Icon(Icons.add_chart_outlined),
-                          label: Text('流量包')),
-                    ],
-                    selected: {tab},
-                    onSelectionChanged: (value) {
-                      setState(() => tab = value.first);
-                    },
-                  ),
-              ],
-            ),
-          ),
+          _StoreTabs(current: tab, onChanged: onTabChanged),
           const CardDivider(),
-          if (tab == _StoreTab.plans)
-            _RecurringPlanCatalog(
-              plans: recurringPlans,
-              selectedPlan: selectedPlan,
-              selectedPlanId: selectedPlanId,
-              onSelectPlan: (id) => setState(() => selectedPlanId = id),
-              controller: controller,
-            )
-          else
-            _TrafficPackCatalog(
-              plans: trafficPlans,
-              controller: controller,
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 16, 22, 20),
+            child: switch (tab) {
+              _StoreTab.plans => _MonthlyPlanSelection(
+                  plans: recurringPlans,
+                  selectedPlan: selectedPlan,
+                  upgradeOnly: upgradeOnly,
+                  onUpgradeOnlyChanged: onUpgradeOnlyChanged,
+                  onSelectPlan: onSelectPlan,
+                ),
+              _StoreTab.traffic => _TrafficPlanSelection(
+                  plans: trafficPlans,
+                  selectedPlan: selectedTrafficPlan,
+                  onSelectPlan: onSelectTrafficPlan,
+                ),
+              _StoreTab.orders => const _OrderTabSelection(),
+            },
+          ),
         ],
       ),
     );
   }
 }
 
-class _RecurringPlanCatalog extends StatelessWidget {
-  const _RecurringPlanCatalog({
+class _StoreTabs extends StatelessWidget {
+  const _StoreTabs({required this.current, required this.onChanged});
+
+  final _StoreTab current;
+  final ValueChanged<_StoreTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 66,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            const SizedBox(width: 22),
+            _StoreTabButton(
+              icon: Icons.workspace_premium_outlined,
+              label: '包月套餐',
+              selected: current == _StoreTab.plans,
+              onTap: () => onChanged(_StoreTab.plans),
+            ),
+            _StoreTabButton(
+              icon: Icons.attach_money_rounded,
+              label: '按量付费',
+              selected: current == _StoreTab.traffic,
+              onTap: () => onChanged(_StoreTab.traffic),
+            ),
+            _StoreTabButton(
+              icon: Icons.schedule_rounded,
+              label: '订单',
+              selected: current == _StoreTab.orders,
+              onTap: () => onChanged(_StoreTab.orders),
+            ),
+            const SizedBox(width: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StoreTabButton extends StatelessWidget {
+  const _StoreTabButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        height: 66,
+        margin: const EdgeInsets.only(right: 28),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? keliInk : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 17, color: selected ? keliInk : keliMuted),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? keliInk : keliMuted,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthlyPlanSelection extends StatelessWidget {
+  const _MonthlyPlanSelection({
     required this.plans,
     required this.selectedPlan,
-    required this.selectedPlanId,
+    required this.upgradeOnly,
+    required this.onUpgradeOnlyChanged,
     required this.onSelectPlan,
-    required this.controller,
   });
 
   final List<StorePlan> plans;
   final StorePlan? selectedPlan;
-  final int? selectedPlanId;
+  final bool upgradeOnly;
+  final ValueChanged<bool> onUpgradeOnlyChanged;
   final ValueChanged<int> onSelectPlan;
-  final AppController controller;
 
   @override
   Widget build(BuildContext context) {
-    if (plans.isEmpty || selectedPlan == null) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Text('暂无可购买订阅套餐', style: TextStyle(color: keliMuted)),
-      );
-    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _StoreNoticeList(),
+        const SizedBox(height: 18),
+        _UpgradeRuleBanner(
+          upgradeOnly: upgradeOnly,
+          onUpgradeOnlyChanged: onUpgradeOnlyChanged,
+        ),
+        const SizedBox(height: 22),
+        const Text('套餐选择',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 14),
+        if (plans.isEmpty)
+          const _EmptyStoreBox(message: '暂无可购买包月套餐')
+        else
+          _PlanChoiceWrap(
+            plans: plans,
+            selectedPlan: selectedPlan,
+            onSelectPlan: onSelectPlan,
+            showUpgradeBadge: true,
+          ),
+      ],
+    );
+  }
+}
 
+class _TrafficPlanSelection extends StatelessWidget {
+  const _TrafficPlanSelection({
+    required this.plans,
+    required this.selectedPlan,
+    required this.onSelectPlan,
+  });
+
+  final List<StorePlan> plans;
+  final StorePlan? selectedPlan;
+  final ValueChanged<int> onSelectPlan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('注意事项',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        const _StoreBullet(text: '按量付费不会替换当前包月套餐。'),
+        const _StoreBullet(text: '购买后流量按对应套餐规则立即生效。'),
+        const _StoreBullet(text: '若为重置流量，将以面板订单规则为准。'),
+        const SizedBox(height: 22),
+        const Text('套餐选择',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 14),
+        if (plans.isEmpty)
+          const _EmptyStoreBox(message: '暂无可购买按量付费套餐')
+        else
+          _PlanChoiceWrap(
+            plans: plans,
+            selectedPlan: selectedPlan,
+            onSelectPlan: onSelectPlan,
+            showUpgradeBadge: false,
+          ),
+      ],
+    );
+  }
+}
+
+class _StoreNoticeList extends StatelessWidget {
+  const _StoreNoticeList();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('注意事项',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+        SizedBox(height: 10),
+        _StoreBullet(text: '续费订阅：续费会在当前套餐基础上叠加有效期。'),
+        _StoreBullet(text: '重置流量：购买重置类套餐将重置当月流量。'),
+        _StoreBullet(text: '更换套餐：更换套餐会以新套餐为准。'),
+      ],
+    );
+  }
+}
+
+class _StoreBullet extends StatelessWidget {
+  const _StoreBullet({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final plan in plans)
-                _PlanSelectorChip(
-                  plan: plan,
-                  selected: selectedPlan!.id == plan.id,
-                  onTap: () => onSelectPlan(plan.id),
-                ),
-            ],
+          const Padding(
+            padding: EdgeInsets.only(top: 7),
+            child: Icon(Icons.circle, size: 5, color: keliMuted),
           ),
-          const SizedBox(height: 18),
-          Text('${selectedPlan!.name} - 选择周期',
-              style:
-                  const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
-          if (selectedPlan!.content.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(selectedPlan!.content,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: keliMuted, fontSize: 12)),
-          ],
-          const SizedBox(height: 14),
-          _SelectedPlanFeatureStrip(plan: selectedPlan!),
-          const SizedBox(height: 14),
-          _PricingOptionGrid(
-            plan: selectedPlan!,
-            options: recurringOptions(selectedPlan!),
-            controller: controller,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: keliMuted,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
           ),
         ],
       ),
@@ -2230,39 +2425,76 @@ class _RecurringPlanCatalog extends StatelessWidget {
   }
 }
 
-class _TrafficPackCatalog extends StatelessWidget {
-  const _TrafficPackCatalog({
-    required this.plans,
-    required this.controller,
+class _UpgradeRuleBanner extends StatelessWidget {
+  const _UpgradeRuleBanner({
+    required this.upgradeOnly,
+    required this.onUpgradeOnlyChanged,
   });
 
-  final List<StorePlan> plans;
-  final AppController controller;
+  final bool upgradeOnly;
+  final ValueChanged<bool> onUpgradeOnlyChanged;
 
   @override
   Widget build(BuildContext context) {
-    if (plans.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Text('暂无可购买流量包', style: TextStyle(color: keliMuted)),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: keliLine),
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final columns = constraints.maxWidth >= 720 ? 2 : 1;
-          final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
-          return Wrap(
-            spacing: 12,
-            runSpacing: 12,
+          final narrow = constraints.maxWidth < 760;
+          final text = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text(
+                '↔ 升级套餐 · 当前套餐支持补差价升级',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+              ),
+              SizedBox(height: 4),
+              Text(
+                '仅白名单目标套餐支持升级，确认后立即覆盖生效。',
+                style: TextStyle(
+                    color: keliMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700),
+              ),
+            ],
+          );
+          final actions = Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              for (final plan in plans)
-                SizedBox(
-                  width: width,
-                  child: _TrafficPackCard(plan: plan, controller: controller),
-                ),
+              _DarkTinyButton(
+                label: '只看可升级',
+                active: upgradeOnly,
+                onTap: () => onUpgradeOnlyChanged(true),
+              ),
+              _LightTinyButton(
+                label: '查看全部',
+                active: !upgradeOnly,
+                onTap: () => onUpgradeOnlyChanged(false),
+              ),
+              const _RuleTinyButton(),
+            ],
+          );
+          if (narrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                text,
+                const SizedBox(height: 12),
+                actions,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: text),
+              actions,
             ],
           );
         },
@@ -2271,182 +2503,288 @@ class _TrafficPackCatalog extends StatelessWidget {
   }
 }
 
-class _PlanSelectorChip extends StatelessWidget {
-  const _PlanSelectorChip({
+class _DarkTinyButton extends StatelessWidget {
+  const _DarkTinyButton({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      onPressed: onTap,
+      style: FilledButton.styleFrom(
+        backgroundColor:
+            active ? const Color(0xFF0F172A) : const Color(0xFFEFF3F8),
+        foregroundColor: active ? Colors.white : keliInk,
+        minimumSize: const Size(84, 36),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+class _LightTinyButton extends StatelessWidget {
+  const _LightTinyButton({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: active ? const Color(0xFFF3F6FA) : Colors.white,
+        minimumSize: const Size(84, 36),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
+class _RuleTinyButton extends StatelessWidget {
+  const _RuleTinyButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('升级和重置规则以面板订单规则为准')),
+        );
+      },
+      icon: const Icon(Icons.info_outline, size: 16),
+      label: const Text('查看规则'),
+      style: TextButton.styleFrom(
+        foregroundColor: keliMuted,
+        minimumSize: const Size(88, 36),
+      ),
+    );
+  }
+}
+
+class _PlanChoiceWrap extends StatelessWidget {
+  const _PlanChoiceWrap({
+    required this.plans,
+    required this.selectedPlan,
+    required this.onSelectPlan,
+    required this.showUpgradeBadge,
+  });
+
+  final List<StorePlan> plans;
+  final StorePlan? selectedPlan;
+  final ValueChanged<int> onSelectPlan;
+  final bool showUpgradeBadge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 10,
+      children: [
+        for (final plan in plans)
+          _PlanChoiceButton(
+            plan: plan,
+            selected: selectedPlan?.id == plan.id,
+            showUpgradeBadge: showUpgradeBadge &&
+                selectedPlan != null &&
+                plan.id != selectedPlan!.id,
+            onTap: () => onSelectPlan(plan.id),
+          ),
+      ],
+    );
+  }
+}
+
+class _PlanChoiceButton extends StatelessWidget {
+  const _PlanChoiceButton({
     required this.plan,
     required this.selected,
+    required this.showUpgradeBadge,
     required this.onTap,
   });
 
   final StorePlan plan;
   final bool selected;
+  final bool showUpgradeBadge;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? keliBlueSoft : Colors.white,
-      borderRadius: BorderRadius.circular(10),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(
-                color: selected ? const Color(0xFFCFE3FF) : keliLineSoft),
+              color: selected ? keliInk : keliLine,
+              width: selected ? 1.2 : 1,
+            ),
           ),
-          child: Text('${plan.name} | ${plan.trafficLabel}',
-              style: TextStyle(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${plan.name} | ${plan.trafficLabel}',
+                style: TextStyle(
                   color: selected ? keliInk : keliMuted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900)),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (showUpgradeBadge) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text('可升级',
+                      style: TextStyle(
+                          color: keliMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900)),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _SelectedPlanFeatureStrip extends StatelessWidget {
-  const _SelectedPlanFeatureStrip({required this.plan});
-
-  final StorePlan plan;
+class _OrderTabSelection extends StatelessWidget {
+  const _OrderTabSelection();
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 560 ? 3 : 1;
-        final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
-        final items = [
-          _PlanFeatureLine(
-              icon: Icons.data_usage, label: '流量', value: plan.trafficLabel),
-          _PlanFeatureLine(
-              icon: Icons.devices_outlined,
-              label: '设备',
-              value: plan.deviceLimit == null || plan.deviceLimit == 0
-                  ? '不限'
-                  : '${plan.deviceLimit} 台'),
-          _PlanFeatureLine(
-              icon: Icons.speed_outlined,
-              label: '速度',
-              value: plan.speedLimit == null || plan.speedLimit == 0
-                  ? '不限'
-                  : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
-        ];
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final item in items) SizedBox(width: width, child: item),
-          ],
-        );
-      },
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('订单', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+        SizedBox(height: 10),
+        _StoreBullet(text: '客户端内购买会直接创建面板订单。'),
+        _StoreBullet(text: '支付完成后会自动刷新套餐和节点数据。'),
+        _StoreBullet(text: '如支付窗口未打开，会复制订单信息供你到面板处理。'),
+      ],
     );
   }
 }
 
-class _StorePaymentPanel extends StatelessWidget {
-  const _StorePaymentPanel({required this.controller});
+class _StorePeriodPanel extends StatelessWidget {
+  const _StorePeriodPanel({
+    required this.title,
+    required this.plan,
+    required this.options,
+    required this.controller,
+    this.trafficMode = false,
+  });
 
+  final String title;
+  final StorePlan? plan;
+  final List<PlanPeriodOption> options;
   final AppController controller;
+  final bool trafficMode;
 
   @override
   Widget build(BuildContext context) {
-    final methods = controller.paymentMethods;
-    final selected =
-        methods.any((method) => method.id == controller.selectedPaymentMethodId)
-            ? controller.selectedPaymentMethodId
-            : null;
-    return KeliCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('支付方式',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 4),
-          const Text('选择后可直接在客户端创建订单并发起支付',
-              style: TextStyle(color: keliMuted, fontSize: 12)),
-          const SizedBox(height: 12),
-          if (controller.isRefreshingStore && methods.isEmpty)
-            const Row(
-              children: [
-                SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2)),
-                SizedBox(width: 10),
-                Text('正在读取支付方式', style: TextStyle(color: keliMuted)),
-              ],
-            )
-          else if (methods.isEmpty)
-            const Text('暂无可用支付方式，仍可创建订单后复制订单号',
-                style: TextStyle(color: keliMuted, fontSize: 12))
-          else
-            DropdownButtonFormField<String>(
-              initialValue: selected,
-              items: [
-                for (final method in methods)
-                  DropdownMenuItem(
-                    value: method.id,
-                    child: Text(method.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800)),
-                  ),
-              ],
-              onChanged: controller.selectPaymentMethod,
-              decoration: const InputDecoration(
-                labelText: '支付方式',
-                prefixIcon: Icon(Icons.payments_outlined),
+    return SizedBox(
+      width: double.infinity,
+      child: KeliCard(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style:
+                    const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+            if (plan != null && plan!.content.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                plan!.content,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: keliMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-          const SizedBox(height: 12),
-          const DetailLine(label: '购买流程', value: '选择套餐周期后直接下单'),
-          const DetailLine(label: '支付结果', value: '成功后自动刷新套餐'),
-        ],
+            ],
+            const SizedBox(height: 34),
+            if (plan == null || options.isEmpty)
+              const _EmptyStoreBox(message: '当前没有可购买项目')
+            else
+              _StorePriceGrid(
+                plan: plan!,
+                options: options,
+                controller: controller,
+                trafficMode: trafficMode,
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _PricingOptionGrid extends StatelessWidget {
-  const _PricingOptionGrid({
+class _StorePriceGrid extends StatelessWidget {
+  const _StorePriceGrid({
     required this.plan,
     required this.options,
     required this.controller,
+    required this.trafficMode,
   });
 
   final StorePlan plan;
   final List<PlanPeriodOption> options;
   final AppController controller;
+  final bool trafficMode;
 
   @override
   Widget build(BuildContext context) {
-    if (options.isEmpty) {
-      return const _EmptyStoreBox(message: '当前套餐暂无可购买周期');
-    }
-
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 840
+        final columns = constraints.maxWidth >= 780
             ? 3
-            : constraints.maxWidth >= 560
+            : constraints.maxWidth >= 520
                 ? 2
                 : 1;
-        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+        final width = (constraints.maxWidth - (columns - 1) * 20) / columns;
         return Wrap(
-          spacing: 12,
-          runSpacing: 12,
+          spacing: 20,
+          runSpacing: 20,
           children: [
             for (final option in options)
               SizedBox(
                 width: width,
-                child: _PlanPricingCard(
+                child: _StorePricingCard(
                   plan: plan,
                   option: option,
                   controller: controller,
+                  trafficMode: trafficMode,
                 ),
               ),
           ],
@@ -2456,34 +2794,120 @@ class _PricingOptionGrid extends StatelessWidget {
   }
 }
 
-class _PlanPricingCard extends StatelessWidget {
-  const _PlanPricingCard({
+class _StorePricingCard extends StatelessWidget {
+  const _StorePricingCard({
     required this.plan,
     required this.option,
     required this.controller,
+    required this.trafficMode,
   });
 
   final StorePlan plan;
   final PlanPeriodOption option;
   final AppController controller;
+  final bool trafficMode;
 
   @override
   Widget build(BuildContext context) {
-    return _StorePurchaseCard(
-      icon: Icons.event_available_outlined,
-      title: option.label,
-      subtitle: monthlyPriceText(option),
-      price: priceText(option.priceCents),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 28, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: keliLine),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _PurchaseMetric(label: '套餐', value: plan.name),
+          Align(
+            alignment: Alignment.topRight,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E2A8A),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(option.label,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900)),
+            ),
+          ),
           const SizedBox(height: 8),
-          _PurchaseMetric(label: '流量', value: plan.trafficLabel),
-          const SizedBox(height: 12),
-          _PlanPurchaseButton(
-            plan: plan,
-            option: option,
-            controller: controller,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                trafficMode
+                    ? priceNumberText(option.priceCents)
+                    : monthlyPriceNumberText(option),
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontSize: 52,
+                  fontWeight: FontWeight.w700,
+                  height: 0.95,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('￥',
+                    style: TextStyle(
+                        color: keliMuted,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(trafficMode ? option.label : '每月',
+              style: const TextStyle(
+                  color: keliMuted, fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 28),
+          _PlanSpecRow(
+              icon: Icons.play_circle_outline, label: '流媒体解锁', value: '主流解锁'),
+          _PlanSpecRow(
+              icon: Icons.devices_outlined,
+              label: '允许设备',
+              value: plan.deviceLimit == null || plan.deviceLimit == 0
+                  ? '无限制'
+                  : '${plan.deviceLimit} 台'),
+          const _PlanSpecRow(
+              icon: Icons.storage_outlined, label: '节点数量', value: '全部节点'),
+          _PlanSpecRow(
+              icon: Icons.wifi_rounded,
+              label: trafficMode ? '可用流量' : '每月可用流量',
+              value: plan.trafficLabel),
+          _PlanSpecRow(
+              icon: Icons.rocket_launch_outlined,
+              label: '最高网速',
+              value: plan.speedLimit == null || plan.speedLimit == 0
+                  ? '无限制'
+                  : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 36,
+            child: FilledButton(
+              onPressed: controller.isPurchasing
+                  ? null
+                  : () => handlePlanPurchase(context, controller, plan, option),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF0F172A),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(5)),
+              ),
+              child: Text(controller.isPurchasing ? '处理中' : '立即购买'),
+            ),
           ),
         ],
       ),
@@ -2491,8 +2915,8 @@ class _PlanPricingCard extends StatelessWidget {
   }
 }
 
-class _PlanFeatureLine extends StatelessWidget {
-  const _PlanFeatureLine({
+class _PlanSpecRow extends StatelessWidget {
+  const _PlanSpecRow({
     required this.icon,
     required this.label,
     required this.value,
@@ -2504,199 +2928,57 @@ class _PlanFeatureLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFBFCFE),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: keliLineSoft),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
         children: [
-          Icon(icon, size: 17, color: keliBlueStrong),
-          const SizedBox(height: 7),
-          Text(label, style: const TextStyle(color: keliMuted, fontSize: 11)),
-          const SizedBox(height: 2),
-          Text(value,
-              overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
-        ],
-      ),
-    );
-  }
-}
-
-class _TrafficPackCard extends StatelessWidget {
-  const _TrafficPackCard({
-    required this.plan,
-    required this.controller,
-  });
-
-  final StorePlan plan;
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final option = firstTrafficOption(plan);
-    if (option == null) {
-      return const _EmptyStoreBox(message: '当前流量包暂无可购买周期');
-    }
-
-    return _StorePurchaseCard(
-      icon: Icons.add_chart_outlined,
-      title: plan.name,
-      subtitle: option.label,
-      price: priceText(option.priceCents),
-      child: Column(
-        children: [
-          _PurchaseMetric(label: '总流量', value: plan.trafficLabel),
-          const SizedBox(height: 8),
-          _PurchaseMetric(
-              label: '类型',
-              value: option.period == 'reset_price' ? '重置当月流量' : '一次性购买'),
-          const SizedBox(height: 12),
-          _PlanPurchaseButton(
-            plan: plan,
-            option: option,
-            controller: controller,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StorePurchaseCard extends StatelessWidget {
-  const _StorePurchaseCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.price,
-    required this.child,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String price;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: keliLineSoft),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.025),
-            blurRadius: 14,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: keliBlueSoft,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 19, color: keliBlueStrong),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 2),
-                    Text(subtitle,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: keliMuted, fontSize: 12)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(price,
-              style:
-                  const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _PurchaseMetric extends StatelessWidget {
-  const _PurchaseMetric({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Text(label, style: const TextStyle(color: keliMuted, fontSize: 12)),
-        const Spacer(),
-        Flexible(
-          child: Text(value,
+          Icon(icon, size: 15, color: const Color(0xFF1E2A8A)),
+          const SizedBox(width: 8),
+          Text('$label：',
+              style: const TextStyle(
+                  color: keliMuted, fontSize: 12, fontWeight: FontWeight.w800)),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
               textAlign: TextAlign.right,
               overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
-        ),
-      ],
+              style: const TextStyle(
+                color: keliInk,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _PlanPurchaseButton extends StatelessWidget {
-  const _PlanPurchaseButton({
-    required this.plan,
-    required this.option,
-    required this.controller,
-  });
+class _StoreOrdersPanel extends StatelessWidget {
+  const _StoreOrdersPanel({required this.controller});
 
-  final StorePlan plan;
-  final PlanPeriodOption option;
   final AppController controller;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: controller.isPurchasing
-            ? null
-            : () => handlePlanPurchase(context, controller, plan, option),
-        icon: controller.isPurchasing
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.shopping_bag_outlined, size: 17),
-        label: Text(controller.isPurchasing ? '处理中' : '立即购买'),
+      child: KeliCard(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('订单',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 14),
+            _EmptyStoreBox(
+              message:
+                  controller.isPurchasing ? '正在创建订单' : '暂无本地订单记录，购买后会自动打开支付结果',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3677,6 +3959,20 @@ StorePlan? selectedRecurringPlan(List<StorePlan> plans, int? selectedPlanId) {
   return plans.first;
 }
 
+StorePlan? selectedStorePlan(List<StorePlan> plans, int? selectedPlanId) {
+  if (plans.isEmpty) {
+    return null;
+  }
+  if (selectedPlanId != null) {
+    for (final plan in plans) {
+      if (plan.id == selectedPlanId) {
+        return plan;
+      }
+    }
+  }
+  return plans.first;
+}
+
 PlanPeriodOption? firstTrafficOption(StorePlan plan) {
   final options = trafficOptions(plan);
   if (options.isEmpty) {
@@ -3698,6 +3994,24 @@ String monthlyPriceText(PlanPeriodOption option) {
 
   final monthlyCents = (option.priceCents / option.months).round();
   return '约 ${priceText(monthlyCents)}/月';
+}
+
+String monthlyPriceNumberText(PlanPeriodOption option) {
+  if (option.months <= 1) {
+    return priceNumberText(option.priceCents);
+  }
+  return priceNumberText((option.priceCents / option.months).round());
+}
+
+String priceNumberText(int cents) {
+  final value = cents / 100;
+  if (value == value.roundToDouble()) {
+    return value.toStringAsFixed(0);
+  }
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
 }
 
 Future<void> handlePlanPurchase(
