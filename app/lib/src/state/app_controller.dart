@@ -7,7 +7,8 @@ import '../services/core_manager.dart';
 import '../services/keli_api.dart';
 import '../services/session_store.dart';
 
-const int latencyTestConcurrency = 4;
+const int latencyQuickConcurrency = 5;
+const int latencyRetryConcurrency = 2;
 
 class _LatencyMeasurement {
   const _LatencyMeasurement({
@@ -660,45 +661,78 @@ class AppController extends ChangeNotifier {
       return;
     }
     isTestingLatency = true;
-    _log('INFO', '开始测试节点延迟，并发 $latencyTestConcurrency 个');
+    _log('INFO', '开始测试节点延迟，快测并发 $latencyQuickConcurrency 个');
     notifyListeners();
     final snapshot = List<ProxyNode>.of(nodes);
     final updated = List<ProxyNode>.of(snapshot);
-    final failures = <String, List<String>>{};
+    final finalFailures = <String, List<String>>{};
     var measured = 0;
     try {
-      for (var start = 0;
-          start < snapshot.length;
-          start += latencyTestConcurrency) {
-        final end = start + latencyTestConcurrency > snapshot.length
-            ? snapshot.length
-            : start + latencyTestConcurrency;
-        final results = await Future.wait([
-          for (var index = start; index < end; index++)
-            _measureNodeLatencyResult(index, snapshot[index]),
-        ]);
-        for (final result in results) {
-          if (result.latencyMs != null) {
-            measured++;
-          } else if (result.failureReason != null) {
-            failures
-                .putIfAbsent(result.failureReason!, () => <String>[])
-                .add(result.node.name);
+      Future<List<int>> runPass({
+        required List<int> indexes,
+        required LatencyTestMode mode,
+        required int concurrency,
+        required bool collectFailures,
+      }) async {
+        final failed = <int>[];
+        for (var start = 0; start < indexes.length; start += concurrency) {
+          final end = start + concurrency > indexes.length
+              ? indexes.length
+              : start + concurrency;
+          final chunk = indexes.sublist(start, end);
+          final results = await Future.wait([
+            for (final index in chunk)
+              _measureNodeLatencyResult(
+                index,
+                snapshot[index],
+                testMode: mode,
+              ),
+          ]);
+          for (final result in results) {
+            if (result.latencyMs != null) {
+              measured++;
+            } else {
+              failed.add(result.index);
+              if (collectFailures && result.failureReason != null) {
+                finalFailures
+                    .putIfAbsent(result.failureReason!, () => <String>[])
+                    .add(result.node.name);
+              }
+            }
+            updated[result.index] = result.node.copyWith(
+              latencyMs: result.latencyMs,
+              clearLatency: result.latencyMs == null,
+            );
           }
-          updated[result.index] = result.node.copyWith(
-            latencyMs: result.latencyMs,
-            clearLatency: result.latencyMs == null,
-          );
+          nodes = List<ProxyNode>.of(updated);
+          notifyListeners();
         }
-        nodes = List<ProxyNode>.of(updated);
-        notifyListeners();
+        return failed;
+      }
+
+      final allIndexes = List<int>.generate(snapshot.length, (index) => index);
+      final failedAfterQuick = await runPass(
+        indexes: allIndexes,
+        mode: LatencyTestMode.quick,
+        concurrency: latencyQuickConcurrency,
+        collectFailures: false,
+      );
+      if (failedAfterQuick.isNotEmpty) {
+        _log('INFO',
+            '快测完成，成功 $measured/${snapshot.length} 个，重试 ${failedAfterQuick.length} 个');
+        await runPass(
+          indexes: failedAfterQuick,
+          mode: LatencyTestMode.retry,
+          concurrency: latencyRetryConcurrency,
+          collectFailures: true,
+        );
       }
       if (measured == 0) {
-        _log('WARN', '真实节点测速未成功：${latencyFailureSummary(failures)}');
+        _log('WARN', '真实节点测速未成功：${latencyFailureSummary(finalFailures)}');
       } else {
         _log('INFO', '延迟测试完成，成功 $measured/${snapshot.length} 个');
-        if (failures.isNotEmpty) {
-          _log('WARN', '部分节点测速未成功：${latencyFailureSummary(failures)}');
+        if (finalFailures.isNotEmpty) {
+          _log('WARN', '部分节点测速未成功：${latencyFailureSummary(finalFailures)}');
         }
       }
     } finally {
@@ -709,10 +743,11 @@ class AppController extends ChangeNotifier {
 
   Future<_LatencyMeasurement> _measureNodeLatencyResult(
     int index,
-    ProxyNode node,
-  ) async {
+    ProxyNode node, {
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
     try {
-      final latency = await _measureNodeLatency(node);
+      final latency = await _measureNodeLatency(node, testMode: testMode);
       return _LatencyMeasurement(
         index: index,
         node: node,
@@ -738,7 +773,10 @@ class AppController extends ChangeNotifier {
     _log('INFO', '开始测试当前节点 ${node.name}');
     notifyListeners();
     try {
-      final latency = await _measureNodeLatency(node);
+      var latency =
+          await _measureNodeLatency(node, testMode: LatencyTestMode.quick);
+      latency ??=
+          await _measureNodeLatency(node, testMode: LatencyTestMode.retry);
       nodes = nodes
           .map((item) => item.id == node.id
               ? item.copyWith(
@@ -761,13 +799,21 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<int?> _measureNodeLatency(ProxyNode node) async {
+  Future<int?> _measureNodeLatency(
+    ProxyNode node, {
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
     final config = await api.fetchSingBoxConfig(
       serverId: node.id,
       platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
       coreVersion: '1.13.11',
     );
-    return coreManager.testLatency(node, config: config, mode: proxyMode);
+    return coreManager.testLatency(
+      node,
+      config: config,
+      mode: proxyMode,
+      testMode: testMode,
+    );
   }
 
   Future<void> refreshDiagnostics({bool logResult = true}) async {

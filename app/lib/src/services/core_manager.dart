@@ -5,6 +5,11 @@ import 'dart:io';
 import '../models.dart';
 import 'session_store.dart';
 
+enum LatencyTestMode {
+  quick,
+  retry,
+}
+
 abstract interface class CoreManager {
   Future<void> prepare();
 
@@ -24,6 +29,7 @@ abstract interface class CoreManager {
     ProxyNode node, {
     Map<String, Object?>? config,
     ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
   });
 
   Stream<CoreTrafficSample> watchTraffic();
@@ -188,6 +194,7 @@ class WindowsCoreManager implements CoreManager {
     ProxyNode node, {
     Map<String, Object?>? config,
     ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
   }) async {
     if (!Platform.isWindows || config == null || !node.isOnline) {
       return null;
@@ -196,6 +203,7 @@ class WindowsCoreManager implements CoreManager {
       await prepare();
     }
 
+    final profile = _latencyProfile(testMode);
     final normalized = _normalizeConfigForMode(config, ProxyMode.system);
     final reservedPorts = <int>{};
 
@@ -227,11 +235,21 @@ class WindowsCoreManager implements CoreManager {
       );
       process.stdout.drain<void>();
       process.stderr.drain<void>();
-      final proxies =
-          await _waitForClashApi(port: clashApiPort, process: process);
-      final proxyNames = _delayTestProxyNames(proxies, proxyCandidates);
+      final proxies = await _waitForClashApi(
+        port: clashApiPort,
+        process: process,
+        timeout: profile.apiReadyTimeout,
+      );
+      final proxyNames = _delayTestProxyNames(
+        proxies,
+        proxyCandidates,
+        maxNames: profile.maxProxyCandidates,
+      );
       return await _queryFirstProxyDelay(
-          port: clashApiPort, proxyNames: proxyNames);
+        port: clashApiPort,
+        proxyNames: proxyNames,
+        profile: profile,
+      );
     } finally {
       process?.kill();
       try {
@@ -968,8 +986,9 @@ class WindowsCoreManager implements CoreManager {
 
   List<String> _delayTestProxyNames(
     Map<String, Object?> proxies,
-    List<String> candidates,
-  ) {
+    List<String> candidates, {
+    int? maxNames,
+  }) {
     final names = <String>[];
     for (final candidate in candidates) {
       if (proxies.containsKey(candidate)) {
@@ -998,7 +1017,10 @@ class WindowsCoreManager implements CoreManager {
     if (names.isEmpty) {
       names.addAll(proxies.keys);
     }
-    return names.toList(growable: false);
+    final selected = maxNames == null || names.length <= maxNames
+        ? names
+        : names.take(maxNames);
+    return selected.toList(growable: false);
   }
 
   Map<String, Object?> _extractClashProxies(Object? decoded) {
@@ -1012,16 +1034,47 @@ class WindowsCoreManager implements CoreManager {
     return <String, Object?>{};
   }
 
+  _LatencyTestProfile _latencyProfile(LatencyTestMode mode) {
+    return switch (mode) {
+      LatencyTestMode.quick => const _LatencyTestProfile(
+          apiReadyTimeout: Duration(seconds: 5),
+          requestTimeout: Duration(milliseconds: 3600),
+          delayTimeoutMs: 2500,
+          maxProxyCandidates: 2,
+          urls: <String>[
+            'https://cp.cloudflare.com/generate_204',
+            'http://www.gstatic.com/generate_204',
+          ],
+        ),
+      LatencyTestMode.retry => const _LatencyTestProfile(
+          apiReadyTimeout: Duration(seconds: 8),
+          requestTimeout: Duration(milliseconds: 5500),
+          delayTimeoutMs: 4000,
+          maxProxyCandidates: 4,
+          urls: <String>[
+            'https://cp.cloudflare.com/generate_204',
+            'http://www.gstatic.com/generate_204',
+            'http://www.msftconnecttest.com/connecttest.txt',
+            'http://detectportal.firefox.com/success.txt',
+          ],
+        ),
+    };
+  }
+
   Future<int?> _queryFirstProxyDelay({
     required int port,
     required List<String> proxyNames,
+    required _LatencyTestProfile profile,
   }) async {
     Object? lastError;
     var onlyReachabilityFailures = true;
     for (final proxyName in proxyNames) {
       try {
-        final latency =
-            await _queryProxyDelay(port: port, proxyName: proxyName);
+        final latency = await _queryProxyDelay(
+          port: port,
+          proxyName: proxyName,
+          profile: profile,
+        );
         if (latency != null) {
           return latency;
         }
@@ -1048,20 +1101,37 @@ class WindowsCoreManager implements CoreManager {
     return null;
   }
 
-  static const List<String> _latencyTestUrls = <String>[
-    'https://cp.cloudflare.com/generate_204',
-    'http://www.gstatic.com/generate_204',
-    'http://connectivitycheck.gstatic.com/generate_204',
-    'http://www.msftconnecttest.com/connecttest.txt',
-    'http://detectportal.firefox.com/success.txt',
-  ];
-
   Future<int?> _queryProxyDelay({
     required int port,
     required String proxyName,
+    required _LatencyTestProfile profile,
   }) async {
+    final completer = Completer<int?>();
+    var pending = profile.urls.length;
     Object? lastError;
-    for (final testUrl in _latencyTestUrls) {
+
+    void finishOne({int? delay, Object? error}) {
+      if (completer.isCompleted) {
+        return;
+      }
+      if (delay != null) {
+        completer.complete(delay);
+        return;
+      }
+      if (error != null) {
+        lastError = error;
+      }
+      pending--;
+      if (pending <= 0) {
+        if (lastError != null) {
+          completer.completeError(CoreException('$lastError'));
+        } else {
+          completer.complete(null);
+        }
+      }
+    }
+
+    for (final testUrl in profile.urls) {
       final uri = Uri(
         scheme: 'http',
         host: _clashApiListen,
@@ -1069,34 +1139,35 @@ class WindowsCoreManager implements CoreManager {
         pathSegments: <String>['proxies', proxyName, 'delay'],
         queryParameters: <String, String>{
           'url': testUrl,
-          'timeout': '5000',
+          'timeout': '${profile.delayTimeoutMs}',
         },
       );
-      try {
-        final decoded =
-            await _getJson(uri, timeout: const Duration(seconds: 8));
+      unawaited((() async {
+        final decoded = await _getJson(uri, timeout: profile.requestTimeout);
         if (decoded is Map) {
           final delay = _intValue(decoded['delay']);
           if (delay != null) {
-            return delay;
+            finishOne(delay: delay);
+            return;
           }
-          lastError = '代理 $proxyName 使用 $testUrl 未返回 delay';
-          continue;
+          finishOne(error: '代理 $proxyName 使用 $testUrl 未返回 delay');
+          return;
         }
-        lastError = '代理 $proxyName 使用 $testUrl 返回非 JSON 对象';
-      } catch (error) {
-        lastError = error;
-        final message = '$error';
-        if (_isDelayRetryableFailure(message)) {
-          continue;
+        finishOne(error: '代理 $proxyName 使用 $testUrl 返回非 JSON 对象');
+      })()
+          .catchError((Object error) {
+        if (!completer.isCompleted && !_isDelayRetryableFailure('$error')) {
+          completer.completeError(error);
+          return;
         }
-        rethrow;
-      }
+        finishOne(error: error);
+      }));
     }
-    if (lastError != null) {
-      throw CoreException('$lastError');
-    }
-    return null;
+
+    return completer.future.timeout(
+      profile.requestTimeout + const Duration(milliseconds: 350),
+      onTimeout: () => null,
+    );
   }
 
   bool _isDelayRetryableFailure(String message) {
@@ -1354,6 +1425,22 @@ class CoreException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class _LatencyTestProfile {
+  const _LatencyTestProfile({
+    required this.apiReadyTimeout,
+    required this.requestTimeout,
+    required this.delayTimeoutMs,
+    required this.maxProxyCandidates,
+    required this.urls,
+  });
+
+  final Duration apiReadyTimeout;
+  final Duration requestTimeout;
+  final int delayTimeoutMs;
+  final int maxProxyCandidates;
+  final List<String> urls;
 }
 
 class _SingBoxAsset {
