@@ -282,6 +282,13 @@ class _PageBodyState extends State<_PageBody> {
         final bottomPadding = widget.isDesktop ? 8.0 : 20.0;
         final availableWidth = constraints.maxWidth - horizontalPadding * 2;
         final contentWidth = availableWidth > 1040 ? 1040.0 : availableWidth;
+        final fillViewport = widget.isDesktop && widget.page == 0;
+        final content = Center(
+          child: SizedBox(
+            width: contentWidth < 0 ? 0 : contentWidth,
+            child: child,
+          ),
+        );
 
         return CustomScrollView(
           controller: _scrollController,
@@ -294,14 +301,12 @@ class _PageBodyState extends State<_PageBody> {
                 horizontalPadding,
                 bottomPadding,
               ),
-              sliver: SliverToBoxAdapter(
-                child: Center(
-                  child: SizedBox(
-                    width: contentWidth < 0 ? 0 : contentWidth,
-                    child: child,
-                  ),
-                ),
-              ),
+              sliver: fillViewport
+                  ? SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: content,
+                    )
+                  : SliverToBoxAdapter(child: content),
             ),
           ],
         );
@@ -459,7 +464,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.5',
+            Text('v0.1.6',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -503,34 +508,37 @@ class HomeScreen extends StatelessWidget {
       children: [
         _DesktopAccountBar(profile: profile),
         const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 8,
-              child: Column(
-                children: [
-                  _ConnectPanel(node: node),
-                  const SizedBox(height: 12),
-                  _RuntimeStrip(isDesktop: true),
-                ],
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 8,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _ConnectPanel(node: node, fillHeight: true),
+                    ),
+                    const SizedBox(height: 12),
+                    _RuntimeStrip(isDesktop: true),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 5,
-              child: Column(
-                children: [
-                  _CurrentNodePanel(node: node),
-                  const SizedBox(height: 12),
-                  const SizedBox(
-                    height: 294,
-                    child: _ModeAndRoutePanel(fillHeight: true),
-                  ),
-                ],
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 5,
+                child: Column(
+                  children: [
+                    _CurrentNodePanel(node: node),
+                    const SizedBox(height: 12),
+                    const Expanded(
+                      child: _ModeAndRoutePanel(fillHeight: true),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -693,10 +701,15 @@ class _MobileHeader extends StatelessWidget {
 }
 
 class _ConnectPanel extends StatelessWidget {
-  const _ConnectPanel({required this.node, this.compact = false});
+  const _ConnectPanel({
+    required this.node,
+    this.compact = false,
+    this.fillHeight = false,
+  });
 
   final ProxyNode? node;
   final bool compact;
+  final bool fillHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -726,7 +739,7 @@ class _ConnectPanel extends StatelessWidget {
     return KeliCard(
       padding: EdgeInsets.all(compact ? 16 : 20),
       child: SizedBox(
-        height: compact ? null : 356,
+        height: compact || fillHeight ? null : 356,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
