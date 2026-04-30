@@ -32,6 +32,14 @@ abstract interface class CoreManager {
     LatencyTestMode testMode = LatencyTestMode.quick,
   });
 
+  Future<Map<int, int?>> testLatencies(
+    List<ProxyNode> nodes, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+    int concurrency = 5,
+  });
+
   Stream<CoreTrafficSample> watchTraffic();
 
   Future<CoreDiagnostics> diagnostics();
@@ -250,6 +258,95 @@ class WindowsCoreManager implements CoreManager {
         proxyNames: proxyNames,
         profile: profile,
       );
+    } finally {
+      process?.kill();
+      try {
+        await process?.exitCode.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        process?.kill(ProcessSignal.sigkill);
+      }
+      try {
+        final currentFile = file;
+        if (currentFile != null && await currentFile.exists()) {
+          await currentFile.delete();
+        }
+      } catch (_) {}
+      _reservedLatencyPorts.removeAll(reservedPorts);
+    }
+  }
+
+  @override
+  Future<Map<int, int?>> testLatencies(
+    List<ProxyNode> nodes, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+    int concurrency = 5,
+  }) async {
+    final results = <int, int?>{
+      for (final node in nodes) node.id: null,
+    };
+    final onlineNodes = nodes.where((node) => node.isOnline).toList();
+    if (!Platform.isWindows || config == null || onlineNodes.isEmpty) {
+      return results;
+    }
+    if (!await _coreExe.exists()) {
+      await prepare();
+    }
+
+    final profile = _latencyProfile(testMode);
+    final normalized = _normalizeConfigForMode(config, ProxyMode.system);
+    final reservedPorts = <int>{};
+
+    File? file;
+    Process? process;
+    try {
+      await _rebindLocalProxyInbounds(normalized, reservedPorts: reservedPorts);
+      final clashApiPort = await _availableTcpPort(
+          preferred: 19090, reservedPorts: reservedPorts);
+      _ensureClashApi(normalized, port: clashApiPort);
+
+      await _configDir.create(recursive: true);
+      file = File(
+          '${_configDir.path}${Platform.pathSeparator}latency-batch-${DateTime.now().millisecondsSinceEpoch}.json');
+      const encoder = JsonEncoder.withIndent('  ');
+      await file.writeAsString(encoder.convert(normalized));
+
+      process = await Process.start(
+        _coreExe.path,
+        ['run', '-c', file.path],
+        workingDirectory: runtimeRoot.path,
+        runInShell: false,
+        environment: _singBoxEnvironment(),
+      );
+      process.stdout.drain<void>();
+      process.stderr.drain<void>();
+
+      final proxies = await _waitForClashApi(
+        port: clashApiPort,
+        process: process,
+        timeout: profile.apiReadyTimeout,
+      );
+      final limit = concurrency <= 0 ? 1 : concurrency;
+      for (var start = 0; start < onlineNodes.length; start += limit) {
+        final end = start + limit > onlineNodes.length
+            ? onlineNodes.length
+            : start + limit;
+        final chunk = onlineNodes.sublist(start, end);
+        final chunkResults = await Future.wait([
+          for (final node in chunk)
+            _queryNodeDelay(
+              port: clashApiPort,
+              proxies: proxies,
+              node: node,
+              profile: profile,
+            ),
+        ]);
+        for (var index = 0; index < chunk.length; index++) {
+          results[chunk[index].id] = chunkResults[index];
+        }
+      }
+      return results;
     } finally {
       process?.kill();
       try {
@@ -1099,6 +1196,43 @@ class WindowsCoreManager implements CoreManager {
       throw CoreException('$lastError');
     }
     return null;
+  }
+
+  Future<int?> _queryNodeDelay({
+    required int port,
+    required Map<String, Object?> proxies,
+    required ProxyNode node,
+    required _LatencyTestProfile profile,
+  }) async {
+    final proxyNames = <String>[];
+    void addCandidate(String? value) {
+      final name = value?.trim();
+      if (name == null || name.isEmpty || proxyNames.contains(name)) {
+        return;
+      }
+      if (proxies.containsKey(name)) {
+        proxyNames.add(name);
+      }
+    }
+
+    addCandidate(node.name);
+    for (final tag in node.tags) {
+      addCandidate(tag);
+    }
+
+    if (proxyNames.isEmpty) {
+      return null;
+    }
+
+    try {
+      return await _queryFirstProxyDelay(
+        port: port,
+        proxyNames: proxyNames,
+        profile: profile,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<int?> _queryProxyDelay({

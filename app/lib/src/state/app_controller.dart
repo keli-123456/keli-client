@@ -7,8 +7,10 @@ import '../services/core_manager.dart';
 import '../services/keli_api.dart';
 import '../services/session_store.dart';
 
-const int latencyQuickConcurrency = 5;
-const int latencyRetryConcurrency = 2;
+const int latencyBatchQuickConcurrency = 16;
+const int latencyBatchRetryConcurrency = 6;
+const int latencyFallbackQuickConcurrency = 4;
+const int latencyFallbackRetryConcurrency = 2;
 
 class _LatencyMeasurement {
   const _LatencyMeasurement({
@@ -661,24 +663,83 @@ class AppController extends ChangeNotifier {
       return;
     }
     isTestingLatency = true;
-    _log('INFO', '开始测试节点延迟，快测并发 $latencyQuickConcurrency 个');
+    _log('INFO', '开始测试节点延迟，优先使用批量核心复用');
     notifyListeners();
     final snapshot = List<ProxyNode>.of(nodes);
     final updated = List<ProxyNode>.of(snapshot);
     final finalFailures = <String, List<String>>{};
     var measured = 0;
+    Map<String, Object?>? batchConfig;
     try {
+      if (snapshot.isNotEmpty) {
+        try {
+          batchConfig = await api.fetchSingBoxBatchConfig(
+            platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+            coreVersion: '1.13.11',
+          );
+          _log('INFO', '已加载全量测速配置，将复用单个核心批量测速');
+        } catch (error) {
+          _log('WARN', '全量测速配置不可用，回退逐节点测速: $error');
+        }
+      }
+
       Future<List<int>> runPass({
         required List<int> indexes,
         required LatencyTestMode mode,
         required int concurrency,
         required bool collectFailures,
       }) async {
+        final currentBatchConfig = batchConfig;
+        if (currentBatchConfig != null) {
+          try {
+            final batchNodes = [
+              for (final index in indexes) snapshot[index],
+            ];
+            final latencies = await coreManager.testLatencies(
+              batchNodes,
+              config: currentBatchConfig,
+              mode: proxyMode,
+              testMode: mode,
+              concurrency: concurrency,
+            );
+            final failed = <int>[];
+            for (final index in indexes) {
+              final node = snapshot[index];
+              final latency = latencies[node.id];
+              if (latency != null) {
+                measured++;
+              } else {
+                failed.add(index);
+                if (collectFailures) {
+                  finalFailures
+                      .putIfAbsent('未返回延迟', () => <String>[])
+                      .add(node.name);
+                }
+              }
+              updated[index] = node.copyWith(
+                latencyMs: latency,
+                clearLatency: latency == null,
+              );
+            }
+            nodes = List<ProxyNode>.of(updated);
+            notifyListeners();
+            return failed;
+          } catch (error) {
+            batchConfig = null;
+            _log('WARN', '批量测速核心失败，回退逐节点测速: ${latencyFailureReason(error)}');
+          }
+        }
+
         final failed = <int>[];
-        for (var start = 0; start < indexes.length; start += concurrency) {
-          final end = start + concurrency > indexes.length
+        final fallbackConcurrency = mode == LatencyTestMode.quick
+            ? latencyFallbackQuickConcurrency
+            : latencyFallbackRetryConcurrency;
+        for (var start = 0;
+            start < indexes.length;
+            start += fallbackConcurrency) {
+          final end = start + fallbackConcurrency > indexes.length
               ? indexes.length
-              : start + concurrency;
+              : start + fallbackConcurrency;
           final chunk = indexes.sublist(start, end);
           final results = await Future.wait([
             for (final index in chunk)
@@ -714,7 +775,7 @@ class AppController extends ChangeNotifier {
       final failedAfterQuick = await runPass(
         indexes: allIndexes,
         mode: LatencyTestMode.quick,
-        concurrency: latencyQuickConcurrency,
+        concurrency: latencyBatchQuickConcurrency,
         collectFailures: false,
       );
       if (failedAfterQuick.isNotEmpty) {
@@ -723,7 +784,7 @@ class AppController extends ChangeNotifier {
         await runPass(
           indexes: failedAfterQuick,
           mode: LatencyTestMode.retry,
-          concurrency: latencyRetryConcurrency,
+          concurrency: latencyBatchRetryConcurrency,
           collectFailures: true,
         );
       }

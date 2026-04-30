@@ -56,6 +56,11 @@ abstract interface class KeliApi {
     required String platform,
     String? coreVersion,
   });
+
+  Future<Map<String, Object?>> fetchSingBoxBatchConfig({
+    required String platform,
+    String? coreVersion,
+  });
 }
 
 class LoginResult {
@@ -310,10 +315,33 @@ class RealKeliApi implements KeliApi {
     required String platform,
     String? coreVersion,
   }) async {
+    return _fetchSingBoxConfig(
+      platform: platform,
+      coreVersion: coreVersion,
+      serverId: serverId,
+    );
+  }
+
+  @override
+  Future<Map<String, Object?>> fetchSingBoxBatchConfig({
+    required String platform,
+    String? coreVersion,
+  }) async {
+    return _fetchSingBoxConfig(
+      platform: platform,
+      coreVersion: coreVersion,
+    );
+  }
+
+  Future<Map<String, Object?>> _fetchSingBoxConfig({
+    required String platform,
+    String? coreVersion,
+    int? serverId,
+  }) async {
     final query = <String, String>{
       'core': 'sing-box',
       'platform': platform,
-      'server_id': '$serverId',
+      if (serverId != null) 'server_id': '$serverId',
       if (coreVersion != null && coreVersion.isNotEmpty)
         'core_version': coreVersion,
     };
