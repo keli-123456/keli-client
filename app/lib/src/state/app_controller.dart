@@ -49,6 +49,7 @@ class AppController extends ChangeNotifier {
     LogEntry(time: DateTime.now(), level: 'INFO', message: '客户端已启动'),
   ];
   Timer? _runtimeTimer;
+  StreamSubscription<CoreTrafficSample>? _trafficSubscription;
   DateTime? _connectedAt;
 
   ProxyNode? get selectedNode {
@@ -604,6 +605,9 @@ class AppController extends ChangeNotifier {
       final applied = await coreManager.applyConfig(config, mode: proxyMode);
       _log('INFO', '配置已写入 ${applied.configFile.path}');
       _log('INFO', '本地代理 ${applied.localProxyType}:${applied.localProxyPort}');
+      if (applied.clashApiAddress != null) {
+        _log('INFO', '本地核心 API ${applied.clashApiAddress}');
+      }
       await coreManager.connect(node: node, mode: proxyMode);
       connectionState = ConnectionStateKind.connected;
       _startRuntimeTimer();
@@ -639,7 +643,18 @@ class AppController extends ChangeNotifier {
     final updated = <ProxyNode>[];
     var measured = 0;
     for (final node in nodes) {
-      final latency = await coreManager.testLatency(node);
+      int? latency;
+      try {
+        final config = await api.fetchSingBoxConfig(
+          serverId: node.id,
+          platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+          coreVersion: '1.13.11',
+        );
+        latency = await coreManager.testLatency(node,
+            config: config, mode: proxyMode);
+      } catch (error) {
+        _log('WARN', '节点 ${node.name} 测速失败: $error');
+      }
       if (latency != null) {
         measured++;
       }
@@ -696,6 +711,7 @@ class AppController extends ChangeNotifier {
         ..writeln('log_exists: ${diagnostic.logExists}')
         ..writeln('process_running: ${diagnostic.processRunning}')
         ..writeln('local_proxy: ${diagnostic.localProxyDisplay}')
+        ..writeln('clash_api: ${diagnostic.clashApiAddress ?? '-'}')
         ..writeln('system_proxy_enabled: ${diagnostic.systemProxyEnabled}')
         ..writeln('system_proxy_server: ${diagnostic.systemProxyServer ?? '-'}')
         ..writeln('config_check: ${diagnostic.configCheckStatus}')
@@ -712,6 +728,7 @@ class AppController extends ChangeNotifier {
 
   void _startRuntimeTimer() {
     _runtimeTimer?.cancel();
+    _trafficSubscription?.cancel();
     _connectedAt = DateTime.now();
     stats = const RuntimeStats(
       uploadSpeed: '0 KB/s',
@@ -727,11 +744,30 @@ class AppController extends ChangeNotifier {
       stats = stats.copyWith(duration: DateTime.now().difference(connectedAt));
       notifyListeners();
     });
+    _trafficSubscription = coreManager.watchTraffic().listen(
+      (sample) {
+        final connectedAt = _connectedAt;
+        stats = stats.copyWith(
+          uploadSpeed: byteRateText(sample.uploadBytesPerSecond),
+          downloadSpeed: byteRateText(sample.downloadBytesPerSecond),
+          sessionTraffic: byteSizeText(sample.sessionTotalBytes),
+          duration: connectedAt == null
+              ? stats.duration
+              : DateTime.now().difference(connectedAt),
+        );
+        notifyListeners();
+      },
+      onError: (Object error) {
+        _log('WARN', '运行流量采集失败: $error');
+      },
+    );
   }
 
   void _stopRuntimeTimer() {
     _runtimeTimer?.cancel();
     _runtimeTimer = null;
+    _trafficSubscription?.cancel();
+    _trafficSubscription = null;
     _connectedAt = null;
   }
 
@@ -749,6 +785,28 @@ class AppController extends ChangeNotifier {
       logs.removeRange(200, logs.length);
     }
   }
+}
+
+String byteRateText(int bytesPerSecond) {
+  return '${byteSizeText(bytesPerSecond)}/s';
+}
+
+String byteSizeText(int bytes) {
+  if (bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  if (unitIndex == 0) {
+    return '${value.toStringAsFixed(0)} ${units[unitIndex]}';
+  }
+  final precision = value >= 100 ? 0 : 1;
+  return '${value.toStringAsFixed(precision)} ${units[unitIndex]}';
 }
 
 String? defaultPaymentMethodId(List<PaymentMethod> methods) {

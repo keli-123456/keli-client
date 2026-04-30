@@ -413,6 +413,22 @@ class RuntimeStats {
   }
 }
 
+class CoreTrafficSample {
+  const CoreTrafficSample({
+    required this.uploadBytesPerSecond,
+    required this.downloadBytesPerSecond,
+    required this.sessionUploadBytes,
+    required this.sessionDownloadBytes,
+  });
+
+  final int uploadBytesPerSecond;
+  final int downloadBytesPerSecond;
+  final int sessionUploadBytes;
+  final int sessionDownloadBytes;
+
+  int get sessionTotalBytes => sessionUploadBytes + sessionDownloadBytes;
+}
+
 class CoreDiagnostics {
   const CoreDiagnostics({
     required this.updatedAt,
@@ -427,6 +443,7 @@ class CoreDiagnostics {
     required this.localProxyType,
     required this.localProxyListen,
     required this.localProxyPort,
+    required this.clashApiAddress,
     required this.systemProxyEnabled,
     required this.systemProxyServer,
     required this.configCheckStatus,
@@ -446,6 +463,7 @@ class CoreDiagnostics {
   final String localProxyType;
   final String localProxyListen;
   final int localProxyPort;
+  final String? clashApiAddress;
   final bool systemProxyEnabled;
   final String? systemProxyServer;
   final String configCheckStatus;

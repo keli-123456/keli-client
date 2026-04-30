@@ -20,7 +20,13 @@ abstract interface class CoreManager {
 
   Future<void> disconnect();
 
-  Future<int?> testLatency(ProxyNode node);
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+  });
+
+  Stream<CoreTrafficSample> watchTraffic();
 
   Future<CoreDiagnostics> diagnostics();
 }
@@ -30,11 +36,13 @@ class CoreApplyResult {
     required this.configFile,
     required this.localProxyPort,
     this.localProxyType = 'mixed',
+    this.clashApiAddress,
   });
 
   final File configFile;
   final int localProxyPort;
   final String localProxyType;
+  final String? clashApiAddress;
 }
 
 class WindowsCoreManager implements CoreManager {
@@ -49,6 +57,8 @@ class WindowsCoreManager implements CoreManager {
   int _localProxyPort = 20808;
   String _localProxyType = 'mixed';
   String _localProxyListen = '127.0.0.1';
+  int _clashApiPort = 0;
+  String _clashApiListen = '127.0.0.1';
 
   Directory get _coreDir =>
       Directory('${runtimeRoot.path}${Platform.pathSeparator}core');
@@ -89,15 +99,20 @@ class WindowsCoreManager implements CoreManager {
     final normalized = _normalizeConfigForMode(config, mode);
     final localProxy =
         _detectLocalProxyEndpoint(normalized) ?? _addMixedInbound(normalized);
+    final clashApiPort = await _availableTcpPort(preferred: 9090);
+    _ensureClashApi(normalized, port: clashApiPort);
     _localProxyPort = localProxy.port;
     _localProxyType = localProxy.type;
     _localProxyListen = localProxy.listen;
+    _clashApiPort = clashApiPort;
+    _clashApiListen = '127.0.0.1';
     const encoder = JsonEncoder.withIndent('  ');
     await _configFile.writeAsString(encoder.convert(normalized));
     return CoreApplyResult(
       configFile: _configFile,
       localProxyPort: _localProxyPort,
       localProxyType: _localProxyType,
+      clashApiAddress: _clashApiAddress,
     );
   }
 
@@ -168,8 +183,102 @@ class WindowsCoreManager implements CoreManager {
   }
 
   @override
-  Future<int?> testLatency(ProxyNode node) async {
-    return null;
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+  }) async {
+    if (!Platform.isWindows || config == null || !node.isOnline) {
+      return null;
+    }
+    if (!await _coreExe.exists()) {
+      await prepare();
+    }
+
+    final normalized = _normalizeConfigForMode(config, ProxyMode.system);
+    await _rebindLocalProxyInbounds(normalized);
+    final clashApiPort = await _availableTcpPort(preferred: 19090);
+    _ensureClashApi(normalized, port: clashApiPort);
+    final proxyTag = _delayTestProxyTag(normalized);
+    if (proxyTag == null) {
+      return null;
+    }
+
+    await _configDir.create(recursive: true);
+    final file = File(
+        '${_configDir.path}${Platform.pathSeparator}latency-${node.id}-${DateTime.now().millisecondsSinceEpoch}.json');
+    const encoder = JsonEncoder.withIndent('  ');
+    await file.writeAsString(encoder.convert(normalized));
+
+    Process? process;
+    try {
+      process = await Process.start(
+        _coreExe.path,
+        ['run', '-c', file.path],
+        workingDirectory: runtimeRoot.path,
+        runInShell: false,
+        environment: _singBoxEnvironment(),
+      );
+      process.stdout.drain<void>();
+      process.stderr.drain<void>();
+      await _waitForClashApi(port: clashApiPort);
+      return await _queryProxyDelay(port: clashApiPort, proxyTag: proxyTag);
+    } finally {
+      process?.kill();
+      try {
+        await process?.exitCode.timeout(const Duration(seconds: 3));
+      } catch (_) {
+        process?.kill(ProcessSignal.sigkill);
+      }
+      try {
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Stream<CoreTrafficSample> watchTraffic() async* {
+    if (_clashApiPort <= 0) {
+      return;
+    }
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    var sessionUpload = 0;
+    var sessionDownload = 0;
+    try {
+      final request = await client.getUrl(_clashApiUri('/traffic'));
+      final response =
+          await request.close().timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw CoreException('Clash API traffic HTTP ${response.statusCode}');
+      }
+      await for (final line
+          in response.transform(utf8.decoder).transform(const LineSplitter())) {
+        final raw = line.trim();
+        if (raw.isEmpty) {
+          continue;
+        }
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) {
+          continue;
+        }
+        final up = _intValue(decoded['up']) ?? 0;
+        final down = _intValue(decoded['down']) ?? 0;
+        sessionUpload += up;
+        sessionDownload += down;
+        yield CoreTrafficSample(
+          uploadBytesPerSecond: up,
+          downloadBytesPerSecond: down,
+          sessionUploadBytes: sessionUpload,
+          sessionDownloadBytes: sessionDownload,
+        );
+      }
+    } catch (error) {
+      _writeLog('Traffic stream closed: $error');
+    } finally {
+      client.close(force: true);
+    }
   }
 
   @override
@@ -195,6 +304,7 @@ class WindowsCoreManager implements CoreManager {
       localProxyType: _localProxyType,
       localProxyListen: _localProxyListen,
       localProxyPort: _localProxyPort,
+      clashApiAddress: _clashApiAddress,
       systemProxyEnabled: proxyEnable == '1' || proxyEnable == '0x1',
       systemProxyServer: proxyServer,
       configCheckStatus: check.status,
@@ -406,6 +516,109 @@ class WindowsCoreManager implements CoreManager {
     });
     return _LocalProxyEndpoint(
         type: 'mixed', tag: tag, listen: '127.0.0.1', port: port);
+  }
+
+  void _ensureClashApi(Map<String, Object?> config, {required int port}) {
+    final rawExperimental = config['experimental'];
+    final experimental = rawExperimental is Map
+        ? Map<String, Object?>.from(rawExperimental)
+        : <String, Object?>{};
+    final rawClashApi = experimental['clash_api'];
+    final clashApi = rawClashApi is Map
+        ? Map<String, Object?>.from(rawClashApi)
+        : <String, Object?>{};
+    clashApi['external_controller'] = '127.0.0.1:$port';
+    clashApi['secret'] = '';
+    experimental['clash_api'] = clashApi;
+    config['experimental'] = experimental;
+  }
+
+  Future<void> _rebindLocalProxyInbounds(Map<String, Object?> config) async {
+    final inbounds = config['inbounds'];
+    if (inbounds is! List) {
+      return;
+    }
+    var preferredPort = 22080;
+    for (final item in inbounds) {
+      if (item is! Map) {
+        continue;
+      }
+      final type = '${item['type']}'.toLowerCase();
+      if (type != 'mixed' && type != 'http' && type != 'socks') {
+        continue;
+      }
+      item['listen'] = '127.0.0.1';
+      item['listen_port'] = await _availableTcpPort(preferred: preferredPort);
+      preferredPort++;
+    }
+  }
+
+  Future<int> _availableTcpPort({required int preferred}) async {
+    Future<int?> tryPort(int port) async {
+      ServerSocket? socket;
+      try {
+        socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, port,
+            shared: false);
+        final selected = socket.port;
+        await socket.close();
+        return selected;
+      } catch (_) {
+        await socket?.close();
+        return null;
+      }
+    }
+
+    if (preferred > 0) {
+      final selected = await tryPort(preferred);
+      if (selected != null) {
+        return selected;
+      }
+    }
+
+    final dynamicPort = await tryPort(0);
+    if (dynamicPort != null) {
+      return dynamicPort;
+    }
+    throw const CoreException('没有可用的本地 TCP 端口');
+  }
+
+  String? _delayTestProxyTag(Map<String, Object?> config) {
+    final outbounds = config['outbounds'];
+    if (outbounds is! List) {
+      return null;
+    }
+
+    final groups = <String>[];
+    final fallback = <String>[];
+    for (final item in outbounds) {
+      if (item is! Map) {
+        continue;
+      }
+      final tag = _stringValue(item['tag']);
+      if (tag == null || tag.isEmpty) {
+        continue;
+      }
+      final type = '${item['type']}'.toLowerCase();
+      if (type == 'direct' || type == 'block' || type == 'dns') {
+        continue;
+      }
+      if (type == 'selector' || type == 'urltest') {
+        groups.add(tag);
+        continue;
+      }
+      return tag;
+    }
+    for (final item in outbounds.whereType<Map>()) {
+      final tag = _stringValue(item['tag']);
+      if (tag != null && tag.isNotEmpty) {
+        fallback.add(tag);
+      }
+    }
+    return groups.isNotEmpty
+        ? groups.first
+        : fallback.isNotEmpty
+            ? fallback.first
+            : null;
   }
 
   int _nextLocalPort(List<Object?> inbounds) {
@@ -661,6 +874,79 @@ class WindowsCoreManager implements CoreManager {
     return value;
   }
 
+  String? get _clashApiAddress =>
+      _clashApiPort <= 0 ? null : '$_clashApiListen:$_clashApiPort';
+
+  Uri _clashApiUri(String path,
+      {int? port, Map<String, String>? queryParameters}) {
+    return Uri(
+      scheme: 'http',
+      host: _clashApiListen,
+      port: port ?? _clashApiPort,
+      path: path,
+      queryParameters: queryParameters,
+    );
+  }
+
+  Future<void> _waitForClashApi({
+    required int port,
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    Object? lastError;
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        await _getJson(_clashApiUri('/version', port: port),
+            timeout: const Duration(seconds: 1));
+        return;
+      } catch (error) {
+        lastError = error;
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+    }
+    throw CoreException('Clash API 未就绪: $lastError');
+  }
+
+  Future<int?> _queryProxyDelay({
+    required int port,
+    required String proxyTag,
+  }) async {
+    final uri = Uri(
+      scheme: 'http',
+      host: _clashApiListen,
+      port: port,
+      pathSegments: <String>['proxies', proxyTag, 'delay'],
+      queryParameters: const <String, String>{
+        'url': 'http://www.gstatic.com/generate_204',
+        'timeout': '5000',
+      },
+    );
+    final decoded = await _getJson(uri, timeout: const Duration(seconds: 8));
+    if (decoded is Map) {
+      return _intValue(decoded['delay']);
+    }
+    return null;
+  }
+
+  Future<Object?> _getJson(Uri uri, {required Duration timeout}) async {
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      final request = await client.getUrl(uri).timeout(timeout);
+      final response = await request.close().timeout(timeout);
+      final raw =
+          await response.transform(utf8.decoder).join().timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw CoreException('HTTP ${response.statusCode}: $raw');
+      }
+      if (raw.trim().isEmpty) {
+        return <String, Object?>{};
+      }
+      return jsonDecode(raw);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   String _inboundTag(Map inbound, String type, int index) {
     final tag = _stringValue(inbound['tag']);
     if (tag != null && tag.isNotEmpty) {
@@ -670,6 +956,19 @@ class WindowsCoreManager implements CoreManager {
   }
 
   String? _stringValue(Object? value) => value == null ? null : '$value';
+
+  int? _intValue(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return num.tryParse(value)?.toInt();
+    }
+    return null;
+  }
 
   bool _boolValue(Object? value) {
     if (value is bool) {
