@@ -55,6 +55,7 @@ Expected methods:
 
 - `login(email, password)`
 - `bootstrap()`
+- `fetchAnnouncements()`
 - `fetchServers()`
 - `fetchConfig(serverId, platform, coreVersion)`
 - `resetSubscribeToken()`
@@ -138,6 +139,7 @@ The app should track these state groups:
 - Auth state: logged out, logged in, expired
 - Subscription state: traffic, expire time, plan, reset day
 - Node state: list, selected node, latency, online status
+- Announcement state: visible notices, local dismissed notice keys
 - Core state: stopped, starting, connected, reconnecting, error
 - Platform state: system proxy, TUN/VPN permission, autostart
 

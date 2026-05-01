@@ -10,13 +10,16 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
-        private const val CHANNEL = "com.keli.keli_client/core"
+        private const val CORE_CHANNEL = "com.keli.keli_client/core"
+        private const val SESSION_CHANNEL = "com.keli.keli_client/session"
         private const val VPN_PERMISSION_REQUEST = 4242
     }
 
+    private val sessionSecretStore by lazy { SessionSecretStore() }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CORE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "prepare" -> handlePrepare(result)
@@ -27,6 +30,30 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SESSION_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "protect" -> handleProtectSessionSecret(call, result)
+                    "unprotect" -> handleUnprotectSessionSecret(call, result)
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun handleProtectSessionSecret(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            result.success(sessionSecretStore.protect(call.argument<String>("value").orEmpty()))
+        } catch (error: Throwable) {
+            result.error("SESSION_PROTECT_FAILED", error.message, null)
+        }
+    }
+
+    private fun handleUnprotectSessionSecret(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            result.success(sessionSecretStore.unprotect(call.argument<String>("value").orEmpty()))
+        } catch (error: Throwable) {
+            result.error("SESSION_UNPROTECT_FAILED", error.message, null)
+        }
     }
 
     private fun handlePrepare(result: MethodChannel.Result) {

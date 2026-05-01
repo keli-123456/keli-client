@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:keli_client/src/services/endpoint_resolver.dart';
 import 'package:keli_client/src/services/keli_api.dart';
 import 'package:keli_client/src/services/session_store.dart';
 import 'package:keli_client/src/state/app_controller.dart';
+import 'package:keli_client/src/ui/app_shell.dart';
 
 void main() {
   test('Keli Client bootstraps through injected services', () async {
@@ -31,6 +33,69 @@ void main() {
     }
   });
 
+  test('session store protects auth data when the platform supports it',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final store = SessionStore(
+      root: temp,
+      secretStore: const FakeSessionSecretStore(),
+    );
+
+    try {
+      await store.save(
+        const ApiSession(
+          baseUrl: 'https://panel.example',
+          apiPrefix: '/api/v1',
+          authData: 'Bearer secret-token',
+          subscribeToken: 'subscribe-token',
+        ),
+      );
+
+      final sessionFile =
+          File('${temp.path}${Platform.pathSeparator}session.json');
+      final decoded = jsonDecode(await sessionFile.readAsString()) as Map;
+
+      expect(decoded['auth_data'], isNull);
+      expect(decoded['auth_data_storage'], 'fake-session-v1');
+      expect(decoded['auth_data_protected'], 'protected:Bearer secret-token');
+
+      final loaded = await store.load();
+      expect(loaded?.authData, 'Bearer secret-token');
+      expect(loaded?.subscribeToken, 'subscribe-token');
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('session store keeps legacy plaintext session files readable', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final store = SessionStore(
+      root: temp,
+      secretStore: const FakeSessionSecretStore(),
+    );
+
+    try {
+      await temp.create(recursive: true);
+      final sessionFile =
+          File('${temp.path}${Platform.pathSeparator}session.json');
+      await sessionFile.writeAsString(
+        jsonEncode(
+          <String, Object?>{
+            'base_url': 'https://panel.example',
+            'api_prefix': '/api/v1',
+            'auth_data': 'Bearer legacy-token',
+          },
+        ),
+      );
+
+      final loaded = await store.load();
+      expect(loaded?.authData, 'Bearer legacy-token');
+      expect(loaded?.baseUrl, 'https://panel.example');
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
+
   test('latency failure reason keeps core API timeout distinct', () {
     expect(
       latencyFailureReason(
@@ -39,6 +104,164 @@ void main() {
         ),
       ),
       '核心 API 未就绪',
+    );
+    expect(
+      latencyFailureReason(
+        const CoreException('节点超时: Connection refused'),
+      ),
+      '节点超时',
+    );
+  });
+
+  test('recharge orders do not offer balance as a payment method', () {
+    const methods = <PaymentMethod>[
+      PaymentMethod(id: '1', name: '余额', payment: 'balance'),
+      PaymentMethod(id: '2', name: 'Stripe', payment: 'stripe'),
+    ];
+    final rechargeOrder = StoreOrder(
+      planId: 0,
+      tradeNo: 'R202605010001',
+      period: 'recharge',
+      status: 0,
+      totalAmountCents: 1000,
+      createdAt: DateTime(2026, 5, 1),
+    );
+    final planOrder = StoreOrder(
+      planId: 1,
+      tradeNo: 'K202605010001',
+      period: 'month_price',
+      status: 0,
+      totalAmountCents: 1000,
+      createdAt: DateTime(2026, 5, 1),
+    );
+
+    expect(
+      paymentMethodsForOrder(methods, rechargeOrder)
+          .map((method) => method.payment),
+      <String>['stripe'],
+    );
+    expect(
+      paymentMethodsForOrder(methods, planOrder).map((method) => method.payment),
+      <String>['balance', 'stripe'],
+    );
+  });
+
+  test('recharge creation is guarded by an existing pending order', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final pendingOrder = StoreOrder(
+      planId: 1,
+      tradeNo: 'K202605010001',
+      period: 'month_price',
+      status: 0,
+      totalAmountCents: 1000,
+      createdAt: DateTime(2026, 5, 1),
+    );
+    final controller = AppController(
+      api: MockKeliApi(orders: [pendingOrder]),
+      coreManager: MockCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.refreshOrders();
+
+      expect(controller.pendingOrder?.tradeNo, 'K202605010001');
+      await expectLater(
+        controller.createRechargeOrder(amountCents: 1000),
+        throwsA(isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('已有待支付订单'),
+        )),
+      );
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('traffic options expose reset only for the current active plan', () {
+    final profile = AppProfile(
+      email: 'test@example.com',
+      planName: 'Current',
+      expireAt: DateTime(2099, 12, 31),
+      usedTrafficGb: 1,
+      totalTrafficGb: 100,
+      resetDay: 10,
+      planId: 1,
+    );
+    const currentPlan = StorePlan(
+      id: 1,
+      name: 'Current',
+      content: '',
+      prices: <String, int>{
+        'month_price': 1200,
+        'reset_price': 200,
+      },
+      transferEnable: 100,
+      speedLimit: null,
+      deviceLimit: null,
+      sell: true,
+      renew: true,
+      sort: 1,
+    );
+    const otherPlan = StorePlan(
+      id: 2,
+      name: 'Other',
+      content: '',
+      prices: <String, int>{
+        'month_price': 1600,
+        'reset_price': 300,
+      },
+      transferEnable: 100,
+      speedLimit: null,
+      deviceLimit: null,
+      sell: true,
+      renew: true,
+      sort: 2,
+    );
+
+    expect(
+      storeTrafficOptions(currentPlan, profile).map((option) => option.period),
+      <String>['reset_price'],
+    );
+    expect(storeTrafficOptions(otherPlan, profile), isEmpty);
+    expect(
+      storeOrderUnavailableReason(
+        profile,
+        otherPlan,
+        otherPlan.periodOptions.last,
+      ),
+      '只能为当前有效套餐购买流量重置包',
+    );
+  });
+
+  test('active current plan with renew disabled is blocked before checkout', () {
+    final profile = AppProfile(
+      email: 'test@example.com',
+      planName: 'Legacy',
+      expireAt: DateTime(2099, 12, 31),
+      usedTrafficGb: 1,
+      totalTrafficGb: 100,
+      resetDay: 10,
+      planId: 1,
+    );
+    const plan = StorePlan(
+      id: 1,
+      name: 'Legacy',
+      content: '',
+      prices: <String, int>{'month_price': 1200},
+      transferEnable: 100,
+      speedLimit: null,
+      deviceLimit: null,
+      sell: true,
+      renew: false,
+      sort: 1,
+    );
+
+    expect(
+      storeOrderUnavailableReason(profile, plan, plan.periodOptions.single),
+      '当前套餐不允许续费，请选择其他套餐',
     );
   });
 
@@ -73,6 +296,130 @@ void main() {
     }
   });
 
+  test('manual latency retry preserves node-level failure reasons', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final controller = AppController(
+      api: MockKeliApi(
+        nodes: const [
+          ProxyNode(
+            id: 1,
+            name: '缺失代理节点',
+            protocol: 'Hysteria2',
+            rate: 1,
+            isOnline: true,
+            latencyMs: null,
+          ),
+          ProxyNode(
+            id: 2,
+            name: '超时节点',
+            protocol: 'VLESS',
+            rate: 1,
+            isOnline: true,
+            latencyMs: null,
+          ),
+        ],
+      ),
+      coreManager: ClassifyingLatencyCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+      await controller.testAllLatency();
+
+      expect(controller.latencyFailureFor(1), '核心 API 未返回该代理');
+      expect(controller.latencyFailureFor(2), '节点超时');
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('selected node latency retries after quick timeout', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final controller = AppController(
+      api: MockKeliApi(
+        nodes: const [
+          ProxyNode(
+            id: 1,
+            name: '重试节点',
+            protocol: 'Hysteria2',
+            rate: 1,
+            isOnline: true,
+            latencyMs: null,
+          ),
+        ],
+      ),
+      coreManager: SelectedNodeRetryCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+      await controller.testSelectedNodeLatency();
+
+      expect(controller.nodes.single.latencyMs, 88);
+      expect(controller.latencyFailureFor(1), isNull);
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('announcements load during bootstrap and can be dismissed', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final controller = AppController(
+      api: MockKeliApi(
+        announcements: [
+          Announcement(
+            id: 'notice-1',
+            title: '维护通知',
+            content: '<p>今晚维护</p>',
+            createdAt: DateTime(2026, 5, 1),
+            show: true,
+            popup: true,
+            tags: const [],
+          ),
+        ],
+      ),
+      coreManager: MockCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+
+      expect(controller.visibleAnnouncements.single.title, '维护通知');
+      expect(controller.popupAnnouncement?.id, 'notice-1');
+
+      await controller
+          .dismissAnnouncement(controller.visibleAnnouncements.single);
+
+      expect(controller.visibleAnnouncements, isEmpty);
+      controller.announcements = [
+        Announcement(
+          id: 'notice-1',
+          title: '维护通知',
+          content: '<p>明晚维护</p>',
+          createdAt: DateTime(2026, 5, 1),
+          show: true,
+          popup: true,
+          tags: const [],
+        ),
+      ];
+      expect(
+        controller.visibleAnnouncements.single.content,
+        '<p>明晚维护</p>',
+      );
+      final cachedKeys =
+          await SessionStore(root: temp).loadDismissedAnnouncementKeys();
+      expect(cachedKeys, isNotEmpty);
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
   test('connection failure reason classifies Android VPN startup issues', () {
     expect(
       connectionFailureReason(
@@ -92,6 +439,65 @@ void main() {
       ),
       '移动端核心缺失',
     );
+  });
+
+  test('connection failure reason classifies desktop core setup issues', () {
+    expect(
+      connectionFailureReason(
+        const CoreException('darwin 暂未接入本地核心'),
+      ),
+      '平台暂未接入核心',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('sing-box 配置文件不存在，请先拉取节点配置'),
+      ),
+      '配置未写入',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('sing-box 启动失败，退出码 1，请查看日志'),
+      ),
+      '核心启动失败',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('修改系统代理失败: access denied'),
+      ),
+      '系统代理设置失败',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('没有可用的本地 TCP 端口'),
+      ),
+      '本地端口不可用',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('下载失败: HTTP 503'),
+      ),
+      '核心准备失败',
+    );
+  });
+
+  test('disconnect failure does not leave connection state stuck', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final controller = AppController(
+      api: MockKeliApi(),
+      coreManager: DisconnectFailingCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      controller.connectionState = ConnectionStateKind.connected;
+      await controller.disconnect();
+
+      expect(controller.connectionState, ConnectionStateKind.error);
+      expect(controller.lastError, '断开连接失败');
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
   });
 
   test('endpoint resolver combines cache, well-known, txt and bootstrap',
@@ -258,9 +664,15 @@ class StaticEndpointResolver implements EndpointResolver {
 }
 
 class MockKeliApi implements KeliApi {
-  const MockKeliApi({this.nodes = const []});
+  const MockKeliApi({
+    this.nodes = const [],
+    this.announcements = const [],
+    this.orders = const [],
+  });
 
   final List<ProxyNode> nodes;
+  final List<Announcement> announcements;
+  final List<StoreOrder> orders;
 
   @override
   Future<BootstrapPayload> bootstrap() async {
@@ -300,15 +712,35 @@ class MockKeliApi implements KeliApi {
   Future<String> createOrder({
     required int planId,
     required String period,
+    String? couponCode,
   }) async {
     return 'trade-no';
+  }
+
+  @override
+  Future<String> createRechargeOrder({required int amountCents}) async {
+    return 'recharge-trade-no';
+  }
+
+  @override
+  Future<Coupon> checkCoupon({
+    required String code,
+    required int planId,
+    required String period,
+  }) async {
+    return const Coupon(type: 1, value: 100);
   }
 
   @override
   Future<List<PaymentMethod>> fetchPaymentMethods() async => const [];
 
   @override
-  Future<List<StoreOrder>> fetchOrders() async => const [];
+  Future<List<StoreOrder>> fetchOrders() async => orders;
+
+  @override
+  Future<List<Announcement>> fetchAnnouncements({int maxItems = 50}) async {
+    return announcements.take(maxItems).toList();
+  }
 
   @override
   Future<List<StorePlan>> fetchPlans() async => const [];
@@ -473,4 +905,75 @@ class MockCoreManager implements CoreManager {
 class UnsupportedLatencyCoreManager extends MockCoreManager {
   @override
   bool get supportsLatencyTesting => false;
+}
+
+class ClassifyingLatencyCoreManager extends MockCoreManager {
+  @override
+  Future<Map<int, int?>> testLatencies(
+    List<ProxyNode> nodes, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+    int concurrency = 5,
+  }) async {
+    return <int, int?>{
+      for (final node in nodes) node.id: null,
+    };
+  }
+
+  @override
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
+    if (node.id == 1) {
+      throw const CoreException('HTTP 404: proxy not found');
+    }
+    throw const CoreException('HTTP 504: timeout');
+  }
+}
+
+class SelectedNodeRetryCoreManager extends MockCoreManager {
+  @override
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
+    if (testMode == LatencyTestMode.quick) {
+      throw const CoreException('节点超时: Connection refused');
+    }
+    return 88;
+  }
+}
+
+class DisconnectFailingCoreManager extends MockCoreManager {
+  @override
+  Future<void> disconnect() async {
+    throw const CoreException('restore proxy failed');
+  }
+}
+
+class FakeSessionSecretStore implements SessionSecretStore {
+  const FakeSessionSecretStore();
+
+  @override
+  String get storageKind => 'fake-session-v1';
+
+  @override
+  Future<String?> protect(String value) async => 'protected:$value';
+
+  @override
+  Future<String?> unprotect(
+    String value, {
+    required String storageKind,
+  }) async {
+    if (storageKind != this.storageKind || !value.startsWith('protected:')) {
+      return null;
+    }
+    return value.substring('protected:'.length);
+  }
 }

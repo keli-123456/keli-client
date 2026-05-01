@@ -75,6 +75,7 @@ class AppProfile {
     required this.usedTrafficGb,
     required this.totalTrafficGb,
     required this.resetDay,
+    this.accountBalanceCents = 0,
     this.uuid,
     this.avatarUrl,
     this.deviceLimit,
@@ -90,6 +91,7 @@ class AppProfile {
   final double usedTrafficGb;
   final double totalTrafficGb;
   final int resetDay;
+  final int accountBalanceCents;
   final String? uuid;
   final String? avatarUrl;
   final int? deviceLimit;
@@ -219,11 +221,25 @@ class PaymentMethod {
     required this.id,
     required this.name,
     required this.payment,
+    this.handlingFeeFixedCents = 0,
+    this.handlingFeePercent = 0,
   });
 
   final String id;
   final String name;
   final String payment;
+  final int handlingFeeFixedCents;
+  final double handlingFeePercent;
+}
+
+class Coupon {
+  const Coupon({
+    required this.type,
+    required this.value,
+  });
+
+  final int type;
+  final int value;
 }
 
 class CheckoutResult {
@@ -252,6 +268,7 @@ class StoreOrder {
     this.handlingAmountCents,
     this.balanceAmountCents,
     this.discountAmountCents,
+    this.bonusAmountCents,
     this.upgradeCreditAmountCents,
   });
 
@@ -268,6 +285,7 @@ class StoreOrder {
   final int? handlingAmountCents;
   final int? balanceAmountCents;
   final int? discountAmountCents;
+  final int? bonusAmountCents;
   final int? upgradeCreditAmountCents;
   final DateTime? createdAt;
 
@@ -341,6 +359,48 @@ class PurchaseResult {
   final String? externalUrl;
   final String? copyText;
   final CheckoutQrPayload? qrPayload;
+}
+
+class Announcement {
+  const Announcement({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.createdAt,
+    required this.show,
+    required this.popup,
+    required this.tags,
+    this.url,
+  });
+
+  final String id;
+  final String title;
+  final String content;
+  final DateTime? createdAt;
+  final bool show;
+  final bool popup;
+  final List<String> tags;
+  final String? url;
+
+  bool get shouldAutoPopup {
+    if (popup) {
+      return true;
+    }
+    final text = tags.join(' ').toLowerCase();
+    return text.contains('弹窗') ||
+        text.contains('弹出') ||
+        text.contains('popup') ||
+        text.contains('modal') ||
+        text.contains('alert');
+  }
+}
+
+String stableAnnouncementHash(String value) {
+  var hash = 5381;
+  for (final unit in value.codeUnits) {
+    hash = ((hash * 33) ^ unit) & 0x7fffffff;
+  }
+  return hash.toRadixString(36);
 }
 
 class ProxyNode {

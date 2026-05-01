@@ -112,6 +112,36 @@ Expected node fields:
 The client should treat these as display fields only. It should not expect raw
 protocol secrets from this endpoint.
 
+## Announcements
+
+### Fetch Notices
+
+```http
+GET /api/v1/user/notice/fetch?current=1&pageSize=50
+Authorization: Bearer access-token
+```
+
+Existing keliboard deployments may ignore `pageSize` and return 5 items per
+page. The client should page through a small bounded number of pages and keep
+only visible announcements.
+
+Expected fields:
+
+- `id`
+- `title`
+- `content`
+- `created_at`
+- `show`
+- `popup`
+- `tags`
+- `url`
+
+`popup=true` or tags containing `弹窗` / `popup` / `modal` should be treated as
+an important announcement that may open once automatically on the client home
+screen. Users can hide an announcement locally; this should not mutate server
+state. Local dismissal is keyed by site, notice id, and content signature so an
+edited announcement can surface again.
+
 ## Per-Node Config
 
 ### Fetch sing-box Config

@@ -53,8 +53,10 @@ class AppController extends ChangeNotifier {
   bool isRefreshingDiagnostics = false;
   bool isTestingLatency = false;
   bool isRefreshingStore = false;
+  bool isRefreshingAnnouncements = false;
   bool isPurchasing = false;
   String? storeError;
+  List<Announcement> announcements = const [];
   List<StorePlan> storePlans = const [];
   List<StoreOrder> storeOrders = const [];
   List<PaymentMethod> paymentMethods = const [];
@@ -82,6 +84,7 @@ class AppController extends ChangeNotifier {
   bool _disposed = false;
   final Set<int> _latencyAttemptedNodeIds = <int>{};
   final Map<int, String> _latencyFailureReasons = <int, String>{};
+  Set<String> _dismissedAnnouncementKeys = <String>{};
 
   ProxyNode? get selectedNode {
     for (final node in nodes) {
@@ -109,6 +112,25 @@ class AppController extends ChangeNotifier {
     for (final order in storeOrders) {
       if (order.isPending) {
         return order;
+      }
+    }
+    return null;
+  }
+
+  List<Announcement> get visibleAnnouncements {
+    return announcements
+        .where((announcement) =>
+            announcement.show &&
+            !_dismissedAnnouncementKeys.contains(
+              _announcementDismissKey(announcement),
+            ))
+        .toList();
+  }
+
+  Announcement? get popupAnnouncement {
+    for (final announcement in visibleAnnouncements) {
+      if (announcement.shouldAutoPopup) {
+        return announcement;
       }
     }
     return null;
@@ -170,6 +192,7 @@ class AppController extends ChangeNotifier {
       if (nodes.isEmpty) {
         _log('WARN', '节点列表为空，请确认账号套餐有效且面板已分配可用节点');
       }
+      await refreshAnnouncements(notify: false);
       unawaited(refreshDiagnostics(logResult: false));
     } catch (error) {
       lastError = '$error';
@@ -184,6 +207,8 @@ class AppController extends ChangeNotifier {
     isBootstrapping = true;
     notifyListeners();
     session = await sessionStore.load();
+    _dismissedAnnouncementKeys =
+        await sessionStore.loadDismissedAnnouncementKeys();
     if (api is RealKeliApi) {
       (api as RealKeliApi).session = session;
     }
@@ -263,6 +288,7 @@ class AppController extends ChangeNotifier {
     isAuthenticated = false;
     profile = null;
     diagnostics = null;
+    announcements = const [];
     storePlans = const [];
     storeOrders = const [];
     paymentMethods = const [];
@@ -275,6 +301,35 @@ class AppController extends ChangeNotifier {
     _lastAutoLatencyNodeSignature = null;
     selectedPage = 0;
     _log('INFO', '已退出登录');
+    notifyListeners();
+  }
+
+  Future<void> refreshAnnouncements({bool notify = true}) async {
+    isRefreshingAnnouncements = true;
+    if (notify) {
+      notifyListeners();
+    }
+    try {
+      announcements = await api.fetchAnnouncements();
+      _log('INFO', '公告已更新，公告 ${announcements.length} 条');
+    } catch (error) {
+      announcements = const [];
+      _log('WARN', '公告加载失败: $error');
+    } finally {
+      isRefreshingAnnouncements = false;
+      if (notify) {
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> dismissAnnouncement(Announcement announcement) async {
+    _dismissedAnnouncementKeys = <String>{
+      ..._dismissedAnnouncementKeys,
+      _announcementDismissKey(announcement),
+    };
+    await sessionStore
+        .saveDismissedAnnouncementKeys(_dismissedAnnouncementKeys);
     notifyListeners();
   }
 
@@ -296,6 +351,18 @@ class AppController extends ChangeNotifier {
 
   int _latencyNodeSignature() {
     return Object.hashAll(nodes.map((node) => Object.hash(node.id, node.name)));
+  }
+
+  String _announcementDismissKey(Announcement announcement) {
+    final sessionScope = session?.baseUrl ?? 'anonymous';
+    final id =
+        announcement.id.trim().isNotEmpty ? announcement.id.trim() : 'notice';
+    final signature = stableAnnouncementHash(
+      '${announcement.title}\n'
+      '${announcement.content}\n'
+      '${announcement.createdAt?.millisecondsSinceEpoch ?? ''}',
+    );
+    return '$sessionScope:$id:$signature';
   }
 
   Future<void> autoTestLatencyOnNodeListOpen({bool force = false}) async {
@@ -386,7 +453,10 @@ class AppController extends ChangeNotifier {
   Future<String> createPlanOrder(
     StorePlan plan,
     PlanPeriodOption period,
-  ) async {
+    {
+    String? couponCode,
+    int? estimatedTotalAmountCents,
+  }) async {
     if (isPurchasing) {
       throw const ApiException('正在处理上一个订单');
     }
@@ -398,8 +468,11 @@ class AppController extends ChangeNotifier {
     storeError = null;
     notifyListeners();
     try {
-      final tradeNo =
-          await api.createOrder(planId: plan.id, period: period.period);
+      final tradeNo = await api.createOrder(
+        planId: plan.id,
+        period: period.period,
+        couponCode: couponCode,
+      );
       storeOrders = [
         StoreOrder(
           planId: plan.id,
@@ -407,11 +480,12 @@ class AppController extends ChangeNotifier {
           tradeNo: tradeNo,
           period: period.period,
           status: 0,
-          totalAmountCents: period.priceCents,
+          totalAmountCents: estimatedTotalAmountCents ?? period.priceCents,
           createdAt: DateTime.now(),
         ),
         ...storeOrders.where((order) => order.tradeNo != tradeNo),
       ];
+      unawaited(refreshOrders());
       _log('INFO', '订单已创建: $tradeNo');
       return tradeNo;
     } catch (error) {
@@ -422,6 +496,59 @@ class AppController extends ChangeNotifier {
       isPurchasing = false;
       notifyListeners();
     }
+  }
+
+  Future<String> createRechargeOrder({required int amountCents}) async {
+    if (isPurchasing) {
+      throw const ApiException('正在处理上一个订单');
+    }
+    if (amountCents < 100) {
+      throw const ApiException('充值金额至少 1 元');
+    }
+    final pending = pendingOrder;
+    if (pending != null) {
+      throw ApiException('已有待支付订单 ${pending.tradeNo}，请先支付或取消后再创建新订单');
+    }
+    isPurchasing = true;
+    storeError = null;
+    notifyListeners();
+    try {
+      final tradeNo = await api.createRechargeOrder(amountCents: amountCents);
+      storeOrders = [
+        StoreOrder(
+          planId: 0,
+          type: 5,
+          tradeNo: tradeNo,
+          period: 'recharge',
+          status: 0,
+          totalAmountCents: amountCents,
+          createdAt: DateTime.now(),
+        ),
+        ...storeOrders.where((order) => order.tradeNo != tradeNo),
+      ];
+      unawaited(refreshOrders());
+      _log('INFO', '充值订单已创建: $tradeNo');
+      return tradeNo;
+    } catch (error) {
+      storeError = '$error';
+      _log('ERROR', '创建充值订单失败: $error');
+      rethrow;
+    } finally {
+      isPurchasing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<Coupon> checkCoupon({
+    required StorePlan plan,
+    required PlanPeriodOption period,
+    required String code,
+  }) {
+    return api.checkCoupon(
+      code: code,
+      planId: plan.id,
+      period: period.period,
+    );
   }
 
   Future<String> createUpgradeOrder({required String quoteToken}) async {
@@ -509,6 +636,7 @@ class AppController extends ChangeNotifier {
     StorePlan plan,
     PlanPeriodOption period, {
     String? paymentMethodId,
+    String? couponCode,
   }) async {
     if (isPurchasing) {
       return const PurchaseResult(message: '正在处理上一个订单');
@@ -525,8 +653,11 @@ class AppController extends ChangeNotifier {
           copyText: pending.tradeNo,
         );
       }
-      final tradeNo =
-          await api.createOrder(planId: plan.id, period: period.period);
+      final tradeNo = await api.createOrder(
+        planId: plan.id,
+        period: period.period,
+        couponCode: couponCode,
+      );
       storeOrders = [
         StoreOrder(
           planId: plan.id,
@@ -745,16 +876,23 @@ class AppController extends ChangeNotifier {
     _log('INFO', '正在断开连接');
     notifyListeners();
     _stopRuntimeTimer();
-    await coreManager.disconnect();
-    connectionState = ConnectionStateKind.disconnected;
-    stats = const RuntimeStats(
-      uploadSpeed: '0 KB/s',
-      downloadSpeed: '0 KB/s',
-      duration: Duration.zero,
-    );
-    _log('INFO', '连接已断开');
-    unawaited(refreshDiagnostics(logResult: false));
-    notifyListeners();
+    try {
+      await coreManager.disconnect();
+      connectionState = ConnectionStateKind.disconnected;
+      stats = const RuntimeStats(
+        uploadSpeed: '0 KB/s',
+        downloadSpeed: '0 KB/s',
+        duration: Duration.zero,
+      );
+      _log('INFO', '连接已断开');
+    } catch (error) {
+      connectionState = ConnectionStateKind.error;
+      lastError = '断开连接失败';
+      _log('ERROR', '断开连接失败：$error');
+    } finally {
+      unawaited(refreshDiagnostics(logResult: false));
+      notifyListeners();
+    }
   }
 
   Future<void> testAllLatency({
@@ -811,7 +949,9 @@ class AppController extends ChangeNotifier {
         required bool collectFailures,
       }) async {
         final currentBatchConfig = batchConfig;
-        if (currentBatchConfig != null) {
+        // Batch mode only returns latency or null; use single-node retry when
+        // collecting final failures so the UI can show the real reason.
+        if (currentBatchConfig != null && !collectFailures) {
           try {
             final batchNodes = [
               for (final index in indexes) snapshot[index],
@@ -832,15 +972,7 @@ class AppController extends ChangeNotifier {
                 _latencyFailureReasons.remove(node.id);
               } else {
                 failed.add(index);
-                if (collectFailures) {
-                  const reason = '未返回延迟';
-                  _latencyFailureReasons[node.id] = reason;
-                  finalFailures.putIfAbsent(reason, () => <String>[]).add(
-                        node.name,
-                      );
-                } else {
-                  _latencyFailureReasons.remove(node.id);
-                }
+                _latencyFailureReasons.remove(node.id);
               }
               updated[index] = node.copyWith(
                 latencyMs: latency,
@@ -983,8 +1115,17 @@ class AppController extends ChangeNotifier {
     _log('INFO', '开始测试当前节点 ${node.name}');
     notifyListeners();
     try {
-      var latency =
-          await _measureNodeLatency(node, testMode: LatencyTestMode.quick);
+      int? latency;
+      try {
+        latency =
+            await _measureNodeLatency(node, testMode: LatencyTestMode.quick);
+      } catch (error) {
+        final reason = latencyFailureReason(error);
+        if (reason != '节点超时' && reason != '核心 API 未就绪') {
+          rethrow;
+        }
+        _log('WARN', '当前节点快测未成功，进入重试：$reason · ${node.name}');
+      }
       latency ??=
           await _measureNodeLatency(node, testMode: LatencyTestMode.retry);
       nodes = nodes
@@ -1159,7 +1300,7 @@ class AppController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _stopRuntimeTimer();
-    unawaited(coreManager.disconnect());
+    unawaited(coreManager.disconnect().catchError((_) {}));
     super.dispose();
   }
 
@@ -1194,10 +1335,14 @@ String latencyFailureReason(Object error) {
   if (message.contains('HTTP 404')) {
     return '核心 API 未返回该代理';
   }
-  if (message.contains('HTTP 408') ||
+  if (message.contains('节点超时') ||
+      message.contains('HTTP 408') ||
       message.contains('HTTP 504') ||
       message.contains('TimeoutException') ||
-      message.contains('Timeout')) {
+      message.contains('Timeout') ||
+      message.contains('Connection closed') ||
+      message.contains('Connection reset') ||
+      message.contains('Connection refused')) {
     return '节点超时';
   }
   if (message.contains('缺少真实节点出站')) {
@@ -1222,6 +1367,10 @@ String latencyFailureSummary(Map<String, List<String>> failures) {
 
 String connectionFailureReason(Object error) {
   final message = '$error';
+  if (message.contains('暂未接入本地核心') ||
+      message.contains('当前只实现 Windows 本地核心管理')) {
+    return '平台暂未接入核心';
+  }
   if (message.contains('VPN 权限') ||
       message.contains('VPN permission') ||
       message.contains('missing vpn permission') ||
@@ -1239,6 +1388,9 @@ String connectionFailureReason(Object error) {
       message.contains('配置尚未写入')) {
     return '配置为空';
   }
+  if (message.contains('配置文件不存在')) {
+    return '配置未写入';
+  }
   if (message.contains('启动超时')) {
     return 'VPN 服务启动超时';
   }
@@ -1251,8 +1403,23 @@ String connectionFailureReason(Object error) {
   if (message.contains('Clash API 未就绪')) {
     return '核心 API 未就绪';
   }
-  if (message.contains('status error') || message.contains('状态 error')) {
+  if (message.contains('启动失败') ||
+      message.contains('status error') ||
+      message.contains('状态 error')) {
     return '核心启动失败';
+  }
+  if (message.contains('修改系统代理失败')) {
+    return '系统代理设置失败';
+  }
+  if (message.contains('没有可用的本地 TCP 端口')) {
+    return '本地端口不可用';
+  }
+  if (message.contains('下载失败') ||
+      message.contains('获取 sing-box 最新版本失败') ||
+      message.contains('GitHub release') ||
+      message.contains('没有找到 sing-box') ||
+      message.contains('解压 sing-box 失败')) {
+    return '核心准备失败';
   }
   return '连接异常';
 }
@@ -1284,11 +1451,27 @@ String? defaultPaymentMethodId(List<PaymentMethod> methods) {
     return null;
   }
   for (final method in methods) {
-    if (method.payment != 'balance') {
+    if (method.payment.toLowerCase() != 'balance') {
       return method.id;
     }
   }
   return methods.first.id;
+}
+
+List<PaymentMethod> rechargePaymentMethods(List<PaymentMethod> methods) {
+  return methods
+      .where((method) => method.payment.toLowerCase() != 'balance')
+      .toList(growable: false);
+}
+
+List<PaymentMethod> paymentMethodsForOrder(
+  List<PaymentMethod> methods,
+  StoreOrder order,
+) {
+  if (!order.isRecharge) {
+    return methods;
+  }
+  return rechargePaymentMethods(methods);
 }
 
 String? checkoutExternalUrl(Object? data) {

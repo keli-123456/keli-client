@@ -23,9 +23,20 @@ abstract interface class KeliApi {
 
   Future<List<StoreOrder>> fetchOrders();
 
+  Future<List<Announcement>> fetchAnnouncements({int maxItems = 50});
+
   Future<Map<String, Object?>> fetchUserConfig();
 
   Future<String> createOrder({
+    required int planId,
+    required String period,
+    String? couponCode,
+  });
+
+  Future<String> createRechargeOrder({required int amountCents});
+
+  Future<Coupon> checkCoupon({
+    required String code,
     required int planId,
     required String period,
   });
@@ -193,6 +204,56 @@ class RealKeliApi implements KeliApi {
   }
 
   @override
+  Future<List<Announcement>> fetchAnnouncements({int maxItems = 50}) async {
+    final items = <Announcement>[];
+    final seen = <String>{};
+    int? total;
+    const maxPages = 10;
+
+    for (var current = 1;
+        current <= maxPages && items.length < maxItems;
+        current += 1) {
+      final body = await _requestWithSession(
+        'GET',
+        '/user/notice/fetch',
+        query: <String, String>{
+          'current': '$current',
+          'pageSize': '$maxItems',
+        },
+      );
+      final payload = _extractPayload(body);
+      final batch = _parseAnnouncements(payload);
+      if (body['total'] != null) {
+        total ??= _intValue(body['total']);
+      }
+      if (batch.isEmpty) {
+        break;
+      }
+      for (final announcement in batch) {
+        if (!announcement.show || announcement.title.trim().isEmpty) {
+          continue;
+        }
+        if (seen.add(announcement.id)) {
+          items.add(announcement);
+          if (items.length >= maxItems) {
+            break;
+          }
+        }
+      }
+      if (total != null && items.length >= total) {
+        break;
+      }
+    }
+
+    items.sort((a, b) {
+      final aTime = a.createdAt?.millisecondsSinceEpoch ?? 0;
+      final bTime = b.createdAt?.millisecondsSinceEpoch ?? 0;
+      return bTime.compareTo(aTime);
+    });
+    return items;
+  }
+
+  @override
   Future<Map<String, Object?>> fetchUserConfig() async {
     final body = await _requestWithSession('GET', '/user/comm/config');
     final payload = _extractPayload(body);
@@ -206,13 +267,17 @@ class RealKeliApi implements KeliApi {
   Future<String> createOrder({
     required int planId,
     required String period,
+    String? couponCode,
   }) async {
+    final normalizedCoupon = couponCode?.trim();
     final body = await _requestWithSession(
       'POST',
       '/user/order/save',
       body: <String, Object?>{
         'plan_id': planId,
         'period': period,
+        if (normalizedCoupon != null && normalizedCoupon.isNotEmpty)
+          'coupon_code': normalizedCoupon,
       },
     );
     final payload = _extractPayload(body);
@@ -221,6 +286,45 @@ class RealKeliApi implements KeliApi {
       throw ApiException('订单创建成功但缺少 trade_no');
     }
     return tradeNo;
+  }
+
+  @override
+  Future<String> createRechargeOrder({required int amountCents}) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/order/recharge',
+      body: <String, Object?>{'amount': _centsToAmountText(amountCents)},
+    );
+    final tradeNo = _tradeNoFromPayload(_extractPayload(body));
+    if (tradeNo == null || tradeNo.isEmpty) {
+      throw const ApiException('充值订单响应缺少订单号');
+    }
+    return tradeNo;
+  }
+
+  @override
+  Future<Coupon> checkCoupon({
+    required String code,
+    required int planId,
+    required String period,
+  }) async {
+    final body = await _requestWithSession(
+      'POST',
+      '/user/coupon/check',
+      body: <String, Object?>{
+        'code': code.trim(),
+        'plan_id': planId,
+        'period': period,
+      },
+    );
+    final payload = _extractPayload(body);
+    if (payload == false) {
+      throw const ApiException('优惠券不可用');
+    }
+    if (payload is! Map) {
+      throw const ApiException('优惠券响应格式错误');
+    }
+    return _parseCoupon(Map<String, Object?>.from(payload));
   }
 
   @override
@@ -485,6 +589,7 @@ class RealKeliApi implements KeliApi {
       uuid: _stringValue(subscribe['uuid']) ?? _stringValue(user['uuid']),
       avatarUrl: _stringValue(user['avatar_url']),
       planName: _stringValue(plan['name']) ?? '未订阅',
+      accountBalanceCents: _intValue(user['balance']) ?? 0,
       planId: _intValue(subscribe['plan_id']) ??
           _intValue(user['plan_id']) ??
           _intValue(plan['id']) ??
@@ -598,6 +703,16 @@ class RealKeliApi implements KeliApi {
       id: _stringValue(raw['id']) ?? '',
       name: _stringValue(raw['name']) ?? _stringValue(raw['payment']) ?? '支付方式',
       payment: _stringValue(raw['payment']) ?? '',
+      handlingFeeFixedCents: _intValue(raw['handling_fee_fixed']) ?? 0,
+      handlingFeePercent:
+          (_numValue(raw['handling_fee_percent']) ?? 0).toDouble(),
+    );
+  }
+
+  Coupon _parseCoupon(Map<String, Object?> raw) {
+    return Coupon(
+      type: _intValue(raw['type']) ?? 0,
+      value: _intValue(raw['value']) ?? 0,
     );
   }
 
@@ -620,6 +735,48 @@ class RealKeliApi implements KeliApi {
           .toList();
     }
     return const [];
+  }
+
+  List<Announcement> _parseAnnouncements(Object? value) {
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((raw) => _parseAnnouncement(Map<String, Object?>.from(raw)))
+          .where((announcement) => announcement.title.trim().isNotEmpty)
+          .toList();
+    }
+    if (value is Map) {
+      if (value['data'] != null) {
+        return _parseAnnouncements(value['data']);
+      }
+      return value.values
+          .whereType<Map>()
+          .map((raw) => _parseAnnouncement(Map<String, Object?>.from(raw)))
+          .where((announcement) => announcement.title.trim().isNotEmpty)
+          .toList();
+    }
+    return const [];
+  }
+
+  Announcement _parseAnnouncement(Map<String, Object?> raw) {
+    final createdAt = _dateTimeValue(raw['created_at'] ?? raw['createdAt']);
+    final title = _stringValue(raw['title'])?.trim() ?? '';
+    final content = _stringValue(raw['content']) ?? '';
+    final signature = stableAnnouncementHash(
+      '$title\n$content\n${createdAt?.millisecondsSinceEpoch ?? ''}',
+    );
+    final fallbackId = 'notice_$signature';
+    return Announcement(
+      id: (_stringValue(raw['id']) ?? fallbackId).trim(),
+      title: title,
+      content: content,
+      createdAt: createdAt,
+      show: raw.containsKey('show') ? _boolValue(raw['show']) : true,
+      popup: _boolValue(raw['popup']),
+      tags: _parseTags(
+          raw['tags'] ?? raw['tag'] ?? raw['labels'] ?? raw['label']),
+      url: _stringValue(raw['url'])?.trim(),
+    );
   }
 
   StoreOrder _parseOrder(Map<String, Object?> raw) {
@@ -649,6 +806,7 @@ class RealKeliApi implements KeliApi {
       handlingAmountCents: _intValue(raw['handling_amount']),
       balanceAmountCents: _intValue(raw['balance_amount']),
       discountAmountCents: _intValue(raw['discount_amount']),
+      bonusAmountCents: _intValue(raw['bonus_amount']),
       upgradeCreditAmountCents: _intValue(raw['upgrade_credit_amount']),
       createdAt: _dateTimeValue(raw['created_at']),
     );
@@ -812,6 +970,13 @@ class RealKeliApi implements KeliApi {
   }
 
   int? _intValue(Object? value) => _numValue(value)?.toInt();
+
+  String _centsToAmountText(int cents) {
+    final value = cents / 100;
+    return value == value.roundToDouble()
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+  }
 
   DateTime? _dateTimeValue(Object? value) {
     if (value == null) {

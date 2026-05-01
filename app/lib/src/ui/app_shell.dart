@@ -521,12 +521,18 @@ class HomeScreen extends StatelessWidget {
     final controller = AppControllerScope.of(context);
     final profile = controller.profile;
     final node = controller.selectedNode;
+    final showAnnouncements = controller.visibleAnnouncements.isNotEmpty ||
+        controller.isRefreshingAnnouncements;
 
     if (!isDesktop) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _MobileHeader(),
+          if (showAnnouncements) ...[
+            const SizedBox(height: 12),
+            const _AnnouncementBanner(compact: true),
+          ],
           const SizedBox(height: 12),
           _AccountPanel(profile: profile, compact: true),
           const SizedBox(height: 12),
@@ -543,6 +549,10 @@ class HomeScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _DesktopAccountBar(profile: profile),
+        if (showAnnouncements) ...[
+          const SizedBox(height: 10),
+          const _AnnouncementBanner(),
+        ],
         const SizedBox(height: 10),
         Expanded(
           child: Row(
@@ -553,7 +563,11 @@ class HomeScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     Expanded(
-                      child: _ConnectPanel(node: node, fillHeight: true),
+                      child: _ConnectPanel(
+                        node: node,
+                        fillHeight: true,
+                        dense: showAnnouncements,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     _RuntimeStrip(isDesktop: true),
@@ -567,8 +581,11 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     _CurrentNodePanel(node: node),
                     const SizedBox(height: 10),
-                    const Expanded(
-                      child: _ModeAndRoutePanel(fillHeight: true),
+                    Expanded(
+                      child: _ModeAndRoutePanel(
+                        fillHeight: true,
+                        dense: showAnnouncements,
+                      ),
                     ),
                   ],
                 ),
@@ -738,16 +755,165 @@ class _MobileHeader extends StatelessWidget {
   }
 }
 
+class _AnnouncementBanner extends StatefulWidget {
+  const _AnnouncementBanner({this.compact = false});
+
+  final bool compact;
+
+  @override
+  State<_AnnouncementBanner> createState() => _AnnouncementBannerState();
+}
+
+class _AnnouncementBannerState extends State<_AnnouncementBanner> {
+  int currentIndex = 0;
+  final Set<String> autoPopupShownIds = <String>{};
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final announcements = controller.visibleAnnouncements;
+    final loading = controller.isRefreshingAnnouncements;
+    if (announcements.isEmpty && !loading) {
+      return const SizedBox.shrink();
+    }
+    if (currentIndex >= announcements.length) {
+      currentIndex = 0;
+    }
+
+    final popup = controller.popupAnnouncement;
+    if (popup != null && autoPopupShownIds.add(popup.id)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        showAnnouncementDialog(context, popup);
+      });
+    }
+
+    if (announcements.isEmpty) {
+      return const KeliCard(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 10),
+            Text('公告加载中',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      );
+    }
+
+    final current = announcements[currentIndex];
+    return KeliCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.compact ? 10 : 12,
+        vertical: widget.compact ? 9 : 10,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: widget.compact ? 32 : 34,
+            height: widget.compact ? 32 : 34,
+            decoration: BoxDecoration(
+              color: keliBlueSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(Icons.campaign_outlined,
+                color: keliBlueStrong, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => showAnnouncementDialog(context, current),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            current.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        if (current.shouldAutoPopup) ...[
+                          const SizedBox(width: 8),
+                          const _MiniBadge(text: '重要', color: keliOrange),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      announcementPreviewText(current),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: keliMuted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (!widget.compact && announcements.length > 1) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${currentIndex + 1}/${announcements.length}',
+              style: const TextStyle(
+                  color: keliMuted, fontSize: 11, fontWeight: FontWeight.w800),
+            ),
+            IconButton(
+              tooltip: '下一条公告',
+              visualDensity: VisualDensity.compact,
+              onPressed: () {
+                setState(() {
+                  currentIndex = (currentIndex + 1) % announcements.length;
+                });
+              },
+              icon: const Icon(Icons.chevron_right_rounded, size: 19),
+            ),
+          ],
+          const SizedBox(width: 4),
+          OutlinedButton.icon(
+            onPressed: () => showAnnouncementDialog(context, current),
+            icon: const Icon(Icons.open_in_new_rounded, size: 15),
+            label: const Text('查看'),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: '隐藏公告',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => controller.dismissAnnouncement(current),
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ConnectPanel extends StatelessWidget {
   const _ConnectPanel({
     required this.node,
     this.compact = false,
     this.fillHeight = false,
+    this.dense = false,
   });
 
   final ProxyNode? node;
   final bool compact;
   final bool fillHeight;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -923,7 +1089,7 @@ class _ConnectPanel extends StatelessWidget {
               const SizedBox(height: 14),
               _SelectedNodeCard(node: node!),
             ],
-            if (!compact) ...[
+            if (!compact && !dense) ...[
               const SizedBox(height: 12),
               _ConnectionStatusDock(node: node),
             ],
@@ -1926,9 +2092,13 @@ class _NodeStatCell extends StatelessWidget {
 }
 
 class _ModeAndRoutePanel extends StatelessWidget {
-  const _ModeAndRoutePanel({this.fillHeight = false});
+  const _ModeAndRoutePanel({
+    this.fillHeight = false,
+    this.dense = false,
+  });
 
   final bool fillHeight;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -1942,7 +2112,7 @@ class _ModeAndRoutePanel extends StatelessWidget {
     final latencyText =
         controller.coreManager.supportsLatencyTesting ? '支持测速' : '平台限制';
     return KeliCard(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(dense ? 12 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1956,23 +2126,23 @@ class _ModeAndRoutePanel extends StatelessWidget {
               _MiniBadge(text: controller.proxyMode.label, color: keliBlue),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: dense ? 8 : 10),
           ModeToggleLine(
             icon: Icons.monitor_outlined,
             title: '系统代理',
             value: controller.proxyMode == ProxyMode.system,
             onChanged: (_) => controller.selectMode(ProxyMode.system),
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: dense ? 5 : 6),
           ModeToggleLine(
             icon: Icons.shield_outlined,
             title: 'TUN模式',
             value: controller.proxyMode == ProxyMode.tun,
             onChanged: (_) => controller.selectMode(ProxyMode.tun),
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: dense ? 8 : 10),
           const Divider(height: 1),
-          const SizedBox(height: 7),
+          SizedBox(height: dense ? 6 : 7),
           const Row(
             children: [
               Expanded(
@@ -1987,10 +2157,11 @@ class _ModeAndRoutePanel extends StatelessWidget {
                       fontWeight: FontWeight.w800)),
             ],
           ),
-          const SizedBox(height: 6),
-          const _RouteSummaryPanel(),
+          SizedBox(height: dense ? 5 : 6),
+          _RouteSummaryPanel(dense: dense),
           if (fillHeight) const Spacer() else const SizedBox(height: 10),
-          _CoreStatusStrip(coreText: coreText, latencyText: latencyText),
+          if (!dense)
+            _CoreStatusStrip(coreText: coreText, latencyText: latencyText),
         ],
       ),
     );
@@ -1998,27 +2169,29 @@ class _ModeAndRoutePanel extends StatelessWidget {
 }
 
 class _RouteSummaryPanel extends StatelessWidget {
-  const _RouteSummaryPanel();
+  const _RouteSummaryPanel({this.dense = false});
+
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: dense ? 6 : 8),
       decoration: BoxDecoration(
         color: const Color(0xFFFAFBFD),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: keliLineSoft),
       ),
-      child: const Column(
+      child: Column(
         children: [
-          _RouteSummaryRow(
+          const _RouteSummaryRow(
               icon: Icons.alt_route_rounded, label: '路由规则', value: '跟随配置'),
-          SizedBox(height: 6),
-          _RouteSummaryRow(
+          SizedBox(height: dense ? 4 : 6),
+          const _RouteSummaryRow(
               icon: Icons.router_outlined, label: '局域网规则', value: '跟随配置'),
-          SizedBox(height: 6),
-          _RouteSummaryRow(
+          SizedBox(height: dense ? 4 : 6),
+          const _RouteSummaryRow(
               icon: Icons.dns_outlined, label: 'DNS', value: '跟随配置'),
         ],
       ),
@@ -3023,16 +3196,30 @@ class _StoreScreenState extends State<StoreScreen> {
         _PageHeader(
           title: '商店',
           subtitle: '套餐购买、流量包和订单',
-          trailing: OutlinedButton.icon(
-            onPressed: controller.isRefreshingStore
-                ? null
-                : () => controller.refreshStore(),
-            icon: const Icon(Icons.refresh, size: 18),
-            label: Text(controller.isRefreshingStore
-                ? '刷新中'
-                : isDesktop
-                    ? '刷新套餐'
-                    : '刷新'),
+          trailing: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: controller.isPurchasing
+                    ? null
+                    : () => handleStoreRecharge(context, controller),
+                icon: const Icon(Icons.account_balance_wallet_outlined,
+                    size: 18),
+                label: Text(isDesktop ? '余额充值' : '充值'),
+              ),
+              OutlinedButton.icon(
+                onPressed: controller.isRefreshingStore
+                    ? null
+                    : () => controller.refreshStore(),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: Text(controller.isRefreshingStore
+                    ? '刷新中'
+                    : isDesktop
+                        ? '刷新套餐'
+                        : '刷新'),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 16),
@@ -3076,9 +3263,9 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
     final hasUpgradeTargets = upgradePlans.isNotEmpty;
     final displayedRecurringPlans =
         upgradeOnly && hasUpgradeTargets ? upgradePlans : recurringPlans;
+    final profile = controller.profile;
     final trafficPlans = controller.storePlans
-        .where((plan) =>
-            isTrafficPackPlan(plan) && trafficOptions(plan).isNotEmpty)
+        .where((plan) => storeTrafficOptions(plan, profile).isNotEmpty)
         .toList();
 
     if (controller.isRefreshingStore && controller.storePlans.isEmpty) {
@@ -3150,7 +3337,7 @@ class _StoreCatalogPanelState extends State<_StoreCatalogPanel> {
             plan: selectedTrafficPlan,
             options: selectedTrafficPlan == null
                 ? const []
-                : trafficOptions(selectedTrafficPlan),
+                : storeTrafficOptions(selectedTrafficPlan, profile),
             controller: controller,
             trafficMode: true,
           )
@@ -3890,6 +4077,23 @@ class _StorePricingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final unavailableReason = storeOrderUnavailableReason(
+      controller.profile,
+      plan,
+      option,
+      isUpgrade: isUpgrade,
+    );
+    final isResetTraffic = option.period == 'reset_price';
+    final canBuy = !controller.isPurchasing && unavailableReason == null;
+    final buttonLabel = controller.isPurchasing
+        ? '处理中'
+        : unavailableReason != null
+            ? '不可购买'
+            : isUpgrade
+                ? '升级购买'
+                : isResetTraffic
+                    ? '重置流量'
+                    : '立即购买';
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
       decoration: BoxDecoration(
@@ -3991,12 +4195,25 @@ class _StorePricingCard extends StatelessWidget {
                 icon: Icons.event_repeat_rounded,
                 label: '重置',
                 value: planResetText(plan)),
+          if (unavailableReason != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              unavailableReason,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: keliMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
             height: 38,
             child: FilledButton.icon(
-              onPressed: controller.isPurchasing
+              onPressed: !canBuy
                   ? null
                   : () => handleStoreBuy(
                         context,
@@ -4006,7 +4223,11 @@ class _StorePricingCard extends StatelessWidget {
                         isUpgrade: isUpgrade,
                       ),
               icon: Icon(
-                isUpgrade ? Icons.upgrade_rounded : Icons.shopping_bag_outlined,
+                isUpgrade
+                    ? Icons.upgrade_rounded
+                    : isResetTraffic
+                        ? Icons.restart_alt_rounded
+                        : Icons.shopping_bag_outlined,
                 size: 17,
               ),
               style: FilledButton.styleFrom(
@@ -4015,11 +4236,7 @@ class _StorePricingCard extends StatelessWidget {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8)),
               ),
-              label: Text(controller.isPurchasing
-                  ? '处理中'
-                  : isUpgrade
-                      ? '升级购买'
-                      : '立即购买'),
+              label: Text(buttonLabel),
             ),
           ),
         ],
@@ -4097,6 +4314,18 @@ Future<void> handleStoreBuy(
   PlanPeriodOption option, {
   bool isUpgrade = false,
 }) async {
+  final unavailableReason = storeOrderUnavailableReason(
+    controller.profile,
+    plan,
+    option,
+    isUpgrade: isUpgrade,
+  );
+  if (unavailableReason != null) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(unavailableReason)));
+    return;
+  }
+
   final pending = controller.pendingOrder;
   if (pending == null) {
     return showCheckoutDialog(
@@ -4178,6 +4407,44 @@ Future<_PendingOrderAction?> showPendingOrderGuardDialog(
       ],
     ),
   );
+}
+
+Future<void> handleStoreRecharge(
+  BuildContext context,
+  AppController controller,
+) async {
+  final pending = controller.pendingOrder;
+  if (pending == null) {
+    return showRechargeDialog(context, controller);
+  }
+
+  final action = await showPendingOrderGuardDialog(context, pending);
+  if (!context.mounted || action == null) {
+    return;
+  }
+  switch (action) {
+    case _PendingOrderAction.payExisting:
+      await showExistingOrderPaymentDialog(
+        context: context,
+        controller: controller,
+        order: pending,
+      );
+      break;
+    case _PendingOrderAction.cancelAndContinue:
+      try {
+        await controller.cancelStoreOrder(pending.tradeNo);
+        if (!context.mounted) {
+          return;
+        }
+        await showRechargeDialog(context, controller);
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('取消订单失败: $error')));
+        }
+      }
+      break;
+  }
 }
 
 Future<void> confirmCancelStoreOrder(
@@ -4272,6 +4539,7 @@ class _CheckoutDialog extends StatefulWidget {
 }
 
 class _CheckoutDialogState extends State<_CheckoutDialog> {
+  final couponController = TextEditingController();
   String? methodId;
   String? tradeNo;
   bool creatingOrder = false;
@@ -4279,12 +4547,17 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
   bool cancelling = false;
   bool checking = false;
   bool refreshing = false;
+  bool couponChecking = false;
   PurchaseResult? result;
   String? resultDetail;
   bool resultIsError = false;
   UpgradePreview? upgradePreview;
   bool previewLoading = false;
   String? previewError;
+  String? validatedCouponCode;
+  int couponDiscountCents = 0;
+  String? couponMessage;
+  bool couponMessageIsError = false;
 
   @override
   void initState() {
@@ -4296,6 +4569,78 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
         : defaultPaymentMethodId(methods);
     if (widget.isUpgrade) {
       unawaited(loadUpgradePreview());
+    }
+  }
+
+  @override
+  void dispose() {
+    couponController.dispose();
+    super.dispose();
+  }
+
+  void resetCouponFeedback() {
+    validatedCouponCode = null;
+    couponDiscountCents = 0;
+    couponMessage = null;
+    couponMessageIsError = false;
+  }
+
+  Future<void> checkCoupon() async {
+    if (widget.isUpgrade || tradeNo != null || couponChecking) {
+      return;
+    }
+    final code = couponController.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      setState(() {
+        resetCouponFeedback();
+        couponMessage = '请输入优惠码';
+        couponMessageIsError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      couponChecking = true;
+      resetCouponFeedback();
+      couponController.text = code;
+      couponController.selection =
+          TextSelection.collapsed(offset: couponController.text.length);
+    });
+
+    try {
+      final coupon = await widget.controller.checkCoupon(
+        plan: widget.plan,
+        period: widget.option,
+        code: code,
+      );
+      final discount = couponDiscountAmountCents(
+        coupon,
+        widget.option.priceCents,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        validatedCouponCode = code;
+        couponDiscountCents = discount;
+        couponMessage = discount > 0
+            ? '优惠码可用，预计优惠 ${priceText(discount)}'
+            : '优惠码可用';
+        couponMessageIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        resetCouponFeedback();
+        couponMessage = '优惠码不可用: $error';
+        couponMessageIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => couponChecking = false);
+      }
     }
   }
 
@@ -4366,6 +4711,30 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     if (creatingOrder || tradeNo != null) {
       return;
     }
+    final unavailableReason = storeOrderUnavailableReason(
+      widget.controller.profile,
+      widget.plan,
+      widget.option,
+      isUpgrade: widget.isUpgrade,
+    );
+    if (unavailableReason != null) {
+      setState(() {
+        result = PurchaseResult(message: '创建失败: $unavailableReason');
+        resultDetail = null;
+        resultIsError = true;
+      });
+      return;
+    }
+    final typedCoupon = couponController.text.trim().toUpperCase();
+    if (!widget.isUpgrade &&
+        typedCoupon.isNotEmpty &&
+        typedCoupon != validatedCouponCode) {
+      setState(() {
+        couponMessage = '请先校验优惠码，或清空后再创建订单';
+        couponMessageIsError = true;
+      });
+      return;
+    }
     setState(() {
       creatingOrder = true;
       result = null;
@@ -4382,7 +4751,13 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       final createdTradeNo = widget.isUpgrade
           ? await widget.controller
               .createUpgradeOrder(quoteToken: preview!.quoteToken!)
-          : await widget.controller.createPlanOrder(widget.plan, widget.option);
+          : await widget.controller.createPlanOrder(
+              widget.plan,
+              widget.option,
+              couponCode: validatedCouponCode,
+              estimatedTotalAmountCents:
+                  math.max(0, widget.option.priceCents - couponDiscountCents),
+            );
       if (!mounted) {
         return;
       }
@@ -4431,7 +4806,8 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     final purchase = await widget.controller.payOrder(
       tradeNo: currentTradeNo,
       paymentMethodId: methodId,
-      allowNoPaymentMethod: !widget.isUpgrade && widget.option.priceCents <= 0,
+      allowNoPaymentMethod: !widget.isUpgrade &&
+          math.max(0, widget.option.priceCents - couponDiscountCents) <= 0,
       successMessage: widget.isUpgrade ? '升级成功，套餐已刷新' : '支付成功，套餐已刷新',
       externalMessage: widget.isUpgrade ? '升级订单已创建，正在打开支付页面' : '正在打开支付页面',
     );
@@ -4585,11 +4961,11 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
   @override
   Widget build(BuildContext context) {
     final methods = widget.controller.paymentMethods;
-    final payableCents = widget.isUpgrade
+    final estimatedPayableCents = widget.isUpgrade
         ? upgradePreview?.payableAmountCents ?? widget.option.priceCents
-        : widget.option.priceCents;
+        : math.max(0, widget.option.priceCents - couponDiscountCents);
     final hasTradeNo = tradeNo != null;
-    final canFreePay = !widget.isUpgrade && widget.option.priceCents <= 0;
+    final canFreePay = !widget.isUpgrade && estimatedPayableCents <= 0;
     final canPay = hasTradeNo &&
         (methodId != null || canFreePay || methods.isEmpty) &&
         !creatingOrder &&
@@ -4598,15 +4974,28 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     final upgradeBlocked = widget.isUpgrade &&
         previewError != null &&
         upgradePreview?.allowUpgrade != true;
+    final createBlockedReason = storeOrderUnavailableReason(
+      widget.controller.profile,
+      widget.plan,
+      widget.option,
+      isUpgrade: widget.isUpgrade,
+    );
     final canCreate = !hasTradeNo &&
         !creatingOrder &&
         !paying &&
+        !couponChecking &&
         !previewLoading &&
-        !upgradeBlocked;
-    final busy =
-        creatingOrder || paying || cancelling || checking || refreshing;
+        !upgradeBlocked &&
+        createBlockedReason == null;
+    final busy = creatingOrder ||
+        paying ||
+        cancelling ||
+        checking ||
+        refreshing ||
+        couponChecking;
     final createText = widget.isUpgrade ? '创建升级订单' : '创建订单';
-    final payText = methods.isEmpty && payableCents > 0 ? '复制订单号' : '立即支付';
+    final payText =
+        methods.isEmpty && estimatedPayableCents > 0 ? '复制订单号' : '立即支付';
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
@@ -4673,7 +5062,93 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                     _CheckoutSummary(
                       plan: widget.plan,
                       option: widget.option,
+                      couponDiscountCents:
+                          widget.isUpgrade ? 0 : couponDiscountCents,
                     ),
+                    if (createBlockedReason != null) ...[
+                      const SizedBox(height: 12),
+                      _CheckoutInfoBox(
+                        icon: Icons.info_outline,
+                        title: '暂不可创建订单',
+                        message: createBlockedReason,
+                      ),
+                    ],
+                    if (!widget.isUpgrade && !hasTradeNo) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: keliLineSoft),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('优惠码',
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: couponController,
+                                    enabled: !busy,
+                                    textCapitalization:
+                                        TextCapitalization.characters,
+                                    decoration: const InputDecoration(
+                                      hintText: '输入优惠码',
+                                      prefixIcon:
+                                          Icon(Icons.confirmation_number),
+                                    ),
+                                    onChanged: (value) {
+                                      final normalized =
+                                          value.trim().toUpperCase();
+                                      if (validatedCouponCode != null &&
+                                          normalized != validatedCouponCode) {
+                                        setState(resetCouponFeedback);
+                                      }
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                FilledButton.icon(
+                                  onPressed: busy ? null : checkCoupon,
+                                  icon: couponChecking
+                                      ? const SizedBox(
+                                          width: 15,
+                                          height: 15,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.check_rounded,
+                                          size: 17),
+                                  label: Text(couponChecking ? '校验中' : '校验'),
+                                ),
+                              ],
+                            ),
+                            if (couponMessage != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                couponMessage!,
+                                style: TextStyle(
+                                  color: couponMessageIsError
+                                      ? keliRed
+                                      : keliGreen,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
                     if (widget.isUpgrade) ...[
                       const SizedBox(height: 12),
                       _UpgradePreviewBox(
@@ -4705,6 +5180,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                               _PaymentMethodTile(
                                 method: method,
                                 selected: method.id == methodId,
+                                payableCents: estimatedPayableCents,
                                 onTap: busy
                                     ? null
                                     : () =>
@@ -4869,6 +5345,417 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
   }
 }
 
+Future<void> showRechargeDialog(
+  BuildContext context,
+  AppController controller,
+) {
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: !controller.isPurchasing,
+    builder: (_) => _RechargeDialog(controller: controller),
+  );
+}
+
+class _RechargeDialog extends StatefulWidget {
+  const _RechargeDialog({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_RechargeDialog> createState() => _RechargeDialogState();
+}
+
+class _RechargeDialogState extends State<_RechargeDialog> {
+  final amountController = TextEditingController();
+  String? methodId;
+  String? tradeNo;
+  int amountCents = 0;
+  bool creating = false;
+  bool paying = false;
+  PurchaseResult? result;
+  String? resultDetail;
+  bool resultIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final methods = rechargePaymentMethods(widget.controller.paymentMethods);
+    methodId = defaultPaymentMethodId(methods);
+  }
+
+  @override
+  void dispose() {
+    amountController.dispose();
+    super.dispose();
+  }
+
+  void setAmount(int cents) {
+    amountController.text = priceNumberText(cents);
+    amountController.selection =
+        TextSelection.collapsed(offset: amountController.text.length);
+    setState(() => amountCents = cents);
+  }
+
+  int parsedAmountCents() {
+    final value = double.tryParse(amountController.text.trim());
+    if (value == null || value <= 0) {
+      return 0;
+    }
+    return (value * 100).round();
+  }
+
+  Future<void> createRechargeOrder() async {
+    if (creating || tradeNo != null) {
+      return;
+    }
+    final cents = parsedAmountCents();
+    if (cents < 100) {
+      setState(() {
+        amountCents = cents;
+        result = const PurchaseResult(message: '创建失败: 充值金额至少 1 元');
+        resultDetail = null;
+        resultIsError = true;
+      });
+      return;
+    }
+    setState(() {
+      creating = true;
+      amountCents = cents;
+      result = null;
+      resultDetail = null;
+      resultIsError = false;
+    });
+    try {
+      final createdTradeNo =
+          await widget.controller.createRechargeOrder(amountCents: cents);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        tradeNo = createdTradeNo;
+        result = PurchaseResult(
+          message: '充值订单已创建',
+          tradeNo: createdTradeNo,
+          copyText: createdTradeNo,
+        );
+        resultDetail = '余额充值订单不可使用余额支付，请选择其他支付方式。';
+        resultIsError = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        result = PurchaseResult(message: '创建失败: $error');
+        resultDetail = null;
+        resultIsError = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => creating = false);
+      }
+    }
+  }
+
+  Future<void> payRechargeOrder() async {
+    final currentTradeNo = tradeNo;
+    if (paying || currentTradeNo == null) {
+      return;
+    }
+    setState(() {
+      paying = true;
+      result = null;
+      resultDetail = null;
+      resultIsError = false;
+    });
+    if (methodId != null) {
+      widget.controller.selectPaymentMethod(methodId);
+    }
+    final purchase = await widget.controller.payOrder(
+      tradeNo: currentTradeNo,
+      paymentMethodId: methodId,
+      successMessage: '充值成功，余额已刷新',
+      externalMessage: '充值订单已创建，正在打开支付页面',
+    );
+    if (!mounted) {
+      return;
+    }
+    var detail = '';
+    if (purchase.copyText != null) {
+      await Clipboard.setData(ClipboardData(text: purchase.copyText!));
+      detail = '订单号已复制到剪贴板';
+    }
+    if (purchase.externalUrl != null) {
+      final opened = await openExternalUrl(purchase.externalUrl!);
+      if (opened) {
+        detail = '支付页面已打开，完成后可回到客户端刷新余额';
+      } else {
+        await Clipboard.setData(ClipboardData(text: purchase.externalUrl!));
+        detail = '支付链接打开失败，已复制到剪贴板';
+      }
+    }
+    setState(() {
+      result = purchase;
+      resultDetail = detail.isEmpty ? null : detail;
+      resultIsError = purchase.message.startsWith('支付失败');
+      paying = false;
+    });
+    if (purchase.qrPayload != null) {
+      unawaited(showCheckoutQrDialog(
+        context: context,
+        controller: widget.controller,
+        payload: purchase.qrPayload!,
+        tradeNo: purchase.tradeNo ?? currentTradeNo,
+        successMessage: '充值成功，余额已刷新',
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final methods = rechargePaymentMethods(widget.controller.paymentMethods);
+    final selectedMethodId =
+        methodId != null && methods.any((method) => method.id == methodId)
+            ? methodId
+            : defaultPaymentMethodId(methods);
+    methodId = selectedMethodId;
+    final currentAmountCents = parsedAmountCents();
+    final displayAmount =
+        currentAmountCents > 0 ? currentAmountCents : amountCents;
+    final hasTradeNo = tradeNo != null;
+    final busy = creating || paying;
+    final canCreate = !busy && !hasTradeNo && currentAmountCents >= 100;
+    final canPay = !busy && hasTradeNo && methods.isNotEmpty;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: Colors.white,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: keliBlueSoft,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.account_balance_wallet_outlined,
+                            color: keliBlueStrong, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('余额充值',
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 2),
+                            Text(
+                                '当前余额 ${priceText(widget.controller.profile?.accountBalanceCents ?? 0)}',
+                                style: const TextStyle(
+                                    color: keliMuted,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: busy ? null : () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: amountController,
+                    enabled: !busy && !hasTradeNo,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: '充值金额',
+                      hintText: '至少 1 元',
+                      prefixText: '¥ ',
+                    ),
+                    onChanged: (_) =>
+                        setState(() => amountCents = parsedAmountCents()),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final cents
+                          in const [1000, 3000, 5000, 10000, 20000])
+                        ActionChip(
+                          label: Text(priceText(cents)),
+                          onPressed: busy || hasTradeNo
+                              ? null
+                              : () => setAmount(cents),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _CheckoutInfoBox(
+                    icon: Icons.info_outline,
+                    title: '充值说明',
+                    message:
+                        '将创建真实面板充值订单。支付完成后余额会刷新；充值订单不可使用余额支付。',
+                  ),
+                  if (displayAmount > 0) ...[
+                    const SizedBox(height: 12),
+                    _CheckoutSummaryLine(
+                      label: '充值金额',
+                      value: priceText(displayAmount),
+                    ),
+                  ],
+                  if (hasTradeNo) ...[
+                    const SizedBox(height: 16),
+                    _CheckoutOrderBox(tradeNo: tradeNo!),
+                    const SizedBox(height: 16),
+                    const Text('支付方式',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 10),
+                    if (methods.isEmpty)
+                      const _CheckoutInfoBox(
+                        icon: Icons.info_outline,
+                        title: '暂无可选支付方式',
+                        message: '充值订单已创建，可复制订单号到面板处理。',
+                      )
+                    else
+                      Column(
+                        children: [
+                          for (final method in methods) ...[
+                            _PaymentMethodTile(
+                              method: method,
+                              selected: method.id == selectedMethodId,
+                              payableCents: displayAmount,
+                              onTap: busy
+                                  ? null
+                                  : () => setState(() => methodId = method.id),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ],
+                      ),
+                  ],
+                  if (result != null) ...[
+                    const SizedBox(height: 14),
+                    _CheckoutResultBox(
+                      result: result!,
+                      detail: resultDetail,
+                      isError: resultIsError,
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final createButton = FilledButton.icon(
+                        onPressed: canCreate ? createRechargeOrder : null,
+                        icon: creating
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.receipt_long_outlined, size: 17),
+                        label: Text(creating ? '处理中' : '创建充值订单'),
+                      );
+                      final payButton = FilledButton.icon(
+                        onPressed: canPay ? payRechargeOrder : null,
+                        icon: paying
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.payment_outlined, size: 17),
+                        label: Text(paying ? '支付中' : '立即支付'),
+                      );
+                      if (constraints.maxWidth < 420) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (!hasTradeNo) createButton else payButton,
+                            if (hasTradeNo) ...[
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: () async {
+                                  await Clipboard.setData(
+                                      ClipboardData(text: tradeNo!));
+                                  if (mounted) {
+                                    setState(() {
+                                      result = PurchaseResult(
+                                          message: '订单号已复制',
+                                          tradeNo: tradeNo);
+                                      resultDetail = '可以到面板订单页继续支付。';
+                                      resultIsError = false;
+                                    });
+                                  }
+                                },
+                                icon: const Icon(Icons.copy_rounded, size: 17),
+                                label: const Text('复制订单号'),
+                              ),
+                            ],
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                              child: !hasTradeNo ? createButton : payButton),
+                          if (hasTradeNo) ...[
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  await Clipboard.setData(
+                                      ClipboardData(text: tradeNo!));
+                                  if (mounted) {
+                                    setState(() {
+                                      result = PurchaseResult(
+                                          message: '订单号已复制',
+                                          tradeNo: tradeNo);
+                                      resultDetail = '可以到面板订单页继续支付。';
+                                      resultIsError = false;
+                                    });
+                                  }
+                                },
+                                icon: const Icon(Icons.copy_rounded, size: 17),
+                                label: const Text('复制订单号'),
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ExistingOrderPaymentDialog extends StatefulWidget {
   const _ExistingOrderPaymentDialog({
     required this.controller,
@@ -4897,28 +5784,26 @@ class _ExistingOrderPaymentDialogState
   @override
   void initState() {
     super.initState();
-    methodId = widget.controller.selectedPaymentMethodId ??
-        defaultPaymentMethodId(widget.controller.paymentMethods);
+    final methods =
+        paymentMethodsForOrder(widget.controller.paymentMethods, widget.order);
+    final current = widget.controller.selectedPaymentMethodId;
+    methodId = methods.any((method) => method.id == current)
+        ? current
+        : defaultPaymentMethodId(methods);
   }
 
   Future<void> payOrder() async {
     if (paying || orderClosed || !widget.order.isPending) {
       return;
     }
-    final methods = widget.controller.paymentMethods;
+    final methods =
+        paymentMethodsForOrder(widget.controller.paymentMethods, widget.order);
     final canFreePay = widget.order.totalAmountCents <= 0;
-    if (methodId == null && !canFreePay) {
-      setState(() {
-        result = PurchaseResult(
-          message: '请选择支付方式，或复制订单号到面板支付',
-          tradeNo: widget.order.tradeNo,
-          copyText: widget.order.tradeNo,
-        );
-        resultDetail = null;
-        resultIsError = false;
-      });
-      return;
-    }
+    final selectedMethodId =
+        methodId != null && methods.any((method) => method.id == methodId)
+            ? methodId
+            : defaultPaymentMethodId(methods);
+    methodId = selectedMethodId;
     if (methods.isEmpty && !canFreePay) {
       await Clipboard.setData(ClipboardData(text: widget.order.tradeNo));
       if (!mounted) {
@@ -4932,6 +5817,18 @@ class _ExistingOrderPaymentDialogState
       });
       return;
     }
+    if (selectedMethodId == null && !canFreePay) {
+      setState(() {
+        result = PurchaseResult(
+          message: '请选择支付方式，或复制订单号到面板支付',
+          tradeNo: widget.order.tradeNo,
+          copyText: widget.order.tradeNo,
+        );
+        resultDetail = null;
+        resultIsError = false;
+      });
+      return;
+    }
 
     setState(() {
       paying = true;
@@ -4939,12 +5836,12 @@ class _ExistingOrderPaymentDialogState
       resultDetail = null;
       resultIsError = false;
     });
-    if (methodId != null) {
-      widget.controller.selectPaymentMethod(methodId);
+    if (selectedMethodId != null) {
+      widget.controller.selectPaymentMethod(selectedMethodId);
     }
     final purchase = await widget.controller.payOrder(
       tradeNo: widget.order.tradeNo,
-      paymentMethodId: methodId,
+      paymentMethodId: selectedMethodId,
       allowNoPaymentMethod: canFreePay,
       successMessage: '支付成功，套餐已刷新',
       externalMessage: '正在打开支付页面',
@@ -5077,13 +5974,20 @@ class _ExistingOrderPaymentDialogState
 
   @override
   Widget build(BuildContext context) {
-    final methods = widget.controller.paymentMethods;
+    final allMethods = widget.controller.paymentMethods;
+    final methods = paymentMethodsForOrder(allMethods, widget.order);
+    final selectedMethodId =
+        methodId != null && methods.any((method) => method.id == methodId)
+            ? methodId
+            : defaultPaymentMethodId(methods);
+    final hidesBalanceForRecharge = widget.order.isRecharge &&
+        allMethods.any((method) => method.payment.toLowerCase() == 'balance');
     final canFreePay = widget.order.totalAmountCents <= 0;
     final activePending = widget.order.isPending && !orderClosed;
     final busy = paying || checking || cancelling;
     final canPay = activePending &&
         !busy &&
-        (methodId != null || canFreePay || methods.isEmpty);
+        (selectedMethodId != null || canFreePay || methods.isEmpty);
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
       backgroundColor: Colors.transparent,
@@ -5156,7 +6060,8 @@ class _ExistingOrderPaymentDialogState
                             for (final method in methods) ...[
                               _PaymentMethodTile(
                                 method: method,
-                                selected: method.id == methodId,
+                                selected: method.id == selectedMethodId,
+                                payableCents: widget.order.totalAmountCents,
                                 onTap: busy
                                     ? null
                                     : () =>
@@ -5166,6 +6071,14 @@ class _ExistingOrderPaymentDialogState
                             ],
                           ],
                         ),
+                      if (hidesBalanceForRecharge) ...[
+                        const SizedBox(height: 2),
+                        const _CheckoutInfoBox(
+                          icon: Icons.info_outline,
+                          title: '充值订单不可用余额支付',
+                          message: '服务端不允许用余额为余额充值订单付款，已隐藏余额支付方式。',
+                        ),
+                      ],
                       const SizedBox(height: 14),
                     ],
                     if (result != null) ...[
@@ -5287,7 +6200,32 @@ class _PendingOrderSummary extends StatelessWidget {
           _StoreOrderDetailLine(
               label: '状态', value: orderStatusText(order.status)),
           _StoreOrderDetailLine(
-              label: '金额', value: priceText(order.totalAmountCents)),
+              label: '订单金额', value: priceText(order.totalAmountCents)),
+          if (order.discountAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '优惠金额', value: priceText(order.discountAmountCents!)),
+          if (order.balanceAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '余额抵扣', value: priceText(order.balanceAmountCents!)),
+          if (order.isRecharge && order.bonusAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '赠送金额',
+                value: '+${priceText(order.bonusAmountCents!)}'),
+          if (order.upgradeCreditAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '升级抵扣',
+                value: priceText(order.upgradeCreditAmountCents!)),
+          if (order.handlingAmountCents != null) ...[
+            _StoreOrderDetailLine(
+                label: '手续费', value: priceText(order.handlingAmountCents!)),
+            _StoreOrderDetailLine(
+                label: '最终应付',
+                value: priceText(storeOrderFinalAmountCents(order))),
+          ],
+          if (order.isRecharge)
+            _StoreOrderDetailLine(
+                label: '预计到账',
+                value: priceText(storeOrderRechargeCreditCents(order))),
           _StoreOrderDetailLine(
               label: '创建时间', value: storeOrderDateText(order.createdAt)),
         ],
@@ -5328,6 +6266,10 @@ class _StoreOrderDetail extends StatelessWidget {
           if (order.balanceAmountCents != null)
             _StoreOrderDetailLine(
                 label: '余额抵扣', value: priceText(order.balanceAmountCents!)),
+          if (order.isRecharge && order.bonusAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '赠送金额',
+                value: '+${priceText(order.bonusAmountCents!)}'),
           if (order.handlingAmountCents != null)
             _StoreOrderDetailLine(
                 label: '手续费', value: priceText(order.handlingAmountCents!)),
@@ -5335,6 +6277,14 @@ class _StoreOrderDetail extends StatelessWidget {
             _StoreOrderDetailLine(
                 label: '升级抵扣',
                 value: priceText(order.upgradeCreditAmountCents!)),
+          if (order.handlingAmountCents != null)
+            _StoreOrderDetailLine(
+                label: '最终应付',
+                value: priceText(storeOrderFinalAmountCents(order))),
+          if (order.isRecharge)
+            _StoreOrderDetailLine(
+                label: '预计到账',
+                value: priceText(storeOrderRechargeCreditCents(order))),
           _StoreOrderDetailLine(
               label: '创建时间', value: storeOrderDateText(order.createdAt)),
         ],
@@ -5461,13 +6411,17 @@ class _CheckoutSummary extends StatelessWidget {
   const _CheckoutSummary({
     required this.plan,
     required this.option,
+    this.couponDiscountCents = 0,
   });
 
   final StorePlan plan;
   final PlanPeriodOption option;
+  final int couponDiscountCents;
 
   @override
   Widget build(BuildContext context) {
+    final discount = math.min(couponDiscountCents, option.priceCents);
+    final payable = math.max(0, option.priceCents - discount);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -5512,6 +6466,20 @@ class _CheckoutSummary extends StatelessWidget {
           _CheckoutSummaryLine(label: '最高网速', value: planSpeedLimitText(plan)),
           if (!isTrafficPeriod(option))
             _CheckoutSummaryLine(label: '流量重置', value: planResetText(plan)),
+          if (discount > 0) ...[
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Divider(height: 1, color: Color(0xFFCFE3FF)),
+            ),
+            _CheckoutSummaryLine(
+              label: '优惠抵扣',
+              value: '-${priceText(discount)}',
+            ),
+            _CheckoutSummaryLine(
+              label: '预计应付',
+              value: priceText(payable),
+            ),
+          ],
         ],
       ),
     );
@@ -5674,14 +6642,24 @@ class _PaymentMethodTile extends StatelessWidget {
     required this.method,
     required this.selected,
     required this.onTap,
+    this.payableCents = 0,
   });
 
   final PaymentMethod method;
   final bool selected;
   final VoidCallback? onTap;
+  final int payableCents;
 
   @override
   Widget build(BuildContext context) {
+    final feeRule = paymentFeeRuleText(method);
+    final feeCents = paymentHandlingFeeCents(method, payableCents);
+    final feeText = feeRule.isEmpty
+        ? null
+        : feeCents > 0
+            ? '预计手续费 ${priceText(feeCents)} ($feeRule)'
+            : '手续费 $feeRule';
+
     return Material(
       color: selected ? keliBlueSoft : Colors.white,
       borderRadius: BorderRadius.circular(10),
@@ -5704,16 +6682,34 @@ class _PaymentMethodTile extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(method.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w900)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(method.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                    if (feeText != null) ...[
+                      const SizedBox(height: 3),
+                      Text(feeText,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: keliMuted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ],
+                ),
               ),
-              Text(method.payment,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: keliMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700)),
+              const SizedBox(width: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 96),
+                child: Text(method.payment,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: keliMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700)),
+              ),
             ],
           ),
         ),
@@ -7694,6 +8690,173 @@ String logDetailText(String message, String summary) {
   return detail;
 }
 
+String announcementPreviewText(Announcement announcement) {
+  final content = announcementPlainText(announcement.content);
+  final time = announcementTimeText(announcement.createdAt);
+  if (content.isEmpty) {
+    return time.isEmpty ? '点击查看公告详情' : time;
+  }
+  if (time.isEmpty) {
+    return content;
+  }
+  return '$content · $time';
+}
+
+String announcementPlainText(String value) {
+  var text = value
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</p\s*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<[^>]+>'), ' ')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'");
+  text = text.replaceAll(RegExp(r'[ \t]+'), ' ');
+  text = text.replaceAll(RegExp(r'\n\s*\n+'), '\n\n');
+  return text.trim();
+}
+
+String announcementTimeText(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  final now = DateTime.now();
+  final diff = now.difference(value);
+  if (diff.inMinutes < 5) {
+    return '刚刚';
+  }
+  if (diff.inHours < 1) {
+    return '${diff.inMinutes} 分钟前';
+  }
+  if (diff.inDays < 1) {
+    return '${diff.inHours} 小时前';
+  }
+  if (diff.inDays < 7) {
+    return '${diff.inDays} 天前';
+  }
+  return dateText(value);
+}
+
+Future<void> showAnnouncementDialog(
+  BuildContext context,
+  Announcement announcement,
+) {
+  return showDialog<void>(
+    context: context,
+    builder: (_) => _AnnouncementDialog(announcement: announcement),
+  );
+}
+
+class _AnnouncementDialog extends StatelessWidget {
+  const _AnnouncementDialog({required this.announcement});
+
+  final Announcement announcement;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final content = announcementPlainText(announcement.content);
+    final url = announcement.url?.trim();
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 620, maxHeight: 620),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: keliBlueSoft,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.campaign_outlined,
+                        color: keliBlueStrong, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(announcement.title,
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 4),
+                        Text(
+                          announcement.createdAt == null
+                              ? '公告'
+                              : '发布时间 ${announcementTimeText(announcement.createdAt)}',
+                          style: const TextStyle(
+                              color: keliMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    content.isEmpty ? '暂无公告内容' : content,
+                    style: const TextStyle(
+                        color: keliInk, fontSize: 13, height: 1.55),
+                  ),
+                ),
+              ),
+              if (url != null && url.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                CopyRow(label: '链接', value: url),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        await controller.dismissAnnouncement(announcement);
+                        if (context.mounted) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                      icon: const Icon(Icons.check_rounded, size: 18),
+                      label: const Text('不再显示'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 String profileResetText(AppProfile profile) {
   final nextResetAt = profile.nextResetAt;
   if (nextResetAt != null) {
@@ -7761,6 +8924,22 @@ List<PlanPeriodOption> trafficOptions(StorePlan plan) {
       .toList();
 }
 
+List<PlanPeriodOption> storeTrafficOptions(
+  StorePlan plan,
+  AppProfile? profile,
+) {
+  final options = trafficOptions(plan);
+  if (options.isEmpty) {
+    return const [];
+  }
+  return options.where((option) {
+    if (option.period == 'reset_price') {
+      return resetTrafficUnavailableReason(profile, plan, option) == null;
+    }
+    return isTrafficPackPlan(plan);
+  }).toList(growable: false);
+}
+
 bool isTrafficPackPlan(StorePlan plan) {
   final hasRecurring = recurringOptions(plan).isNotEmpty;
   final hasTraffic = trafficOptions(plan).isNotEmpty;
@@ -7769,6 +8948,50 @@ bool isTrafficPackPlan(StorePlan plan) {
 
 bool isTrafficPeriod(PlanPeriodOption option) {
   return option.period == 'onetime_price' || option.period == 'reset_price';
+}
+
+String? resetTrafficUnavailableReason(
+  AppProfile? profile,
+  StorePlan plan,
+  PlanPeriodOption option,
+) {
+  if (option.period != 'reset_price') {
+    return null;
+  }
+  if (option.priceCents <= 0) {
+    return '当前套餐未开放流量重置包';
+  }
+  if (profile == null ||
+      !profile.hasActiveSubscription ||
+      profile.totalTrafficGb <= 0) {
+    return '需要先拥有有效套餐才能购买流量重置包';
+  }
+  if (profile.planId != plan.id) {
+    return '只能为当前有效套餐购买流量重置包';
+  }
+  return null;
+}
+
+String? storeOrderUnavailableReason(
+  AppProfile? profile,
+  StorePlan plan,
+  PlanPeriodOption option, {
+  bool isUpgrade = false,
+}) {
+  if (isUpgrade) {
+    return null;
+  }
+  final resetReason = resetTrafficUnavailableReason(profile, plan, option);
+  if (resetReason != null) {
+    return resetReason;
+  }
+  if (profile != null &&
+      profile.hasActiveSubscription &&
+      profile.planId == plan.id &&
+      !plan.renew) {
+    return '当前套餐不允许续费，请选择其他套餐';
+  }
+  return null;
 }
 
 String planDeviceLimitText(StorePlan plan) {
@@ -7900,6 +9123,60 @@ String priceText(int cents) {
       ? value.toStringAsFixed(0)
       : value.toStringAsFixed(2);
   return '¥$text';
+}
+
+int couponDiscountAmountCents(Coupon coupon, int priceCents) {
+  if (priceCents <= 0 || coupon.value <= 0) {
+    return 0;
+  }
+  final discount = switch (coupon.type) {
+    1 => coupon.value,
+    2 => (priceCents * coupon.value / 100).round(),
+    _ => 0,
+  };
+  return math.min(priceCents, math.max(0, discount));
+}
+
+int paymentHandlingFeeCents(PaymentMethod method, int amountCents) {
+  if (amountCents <= 0) {
+    return 0;
+  }
+  final percentFee = method.handlingFeePercent > 0
+      ? (amountCents * method.handlingFeePercent / 100).round()
+      : 0;
+  return math.max(0, percentFee + method.handlingFeeFixedCents);
+}
+
+int storeOrderFinalAmountCents(StoreOrder order) {
+  return math.max(
+    0,
+    order.totalAmountCents + (order.handlingAmountCents ?? 0),
+  );
+}
+
+int storeOrderRechargeCreditCents(StoreOrder order) {
+  return math.max(0, order.totalAmountCents + (order.bonusAmountCents ?? 0));
+}
+
+String paymentFeeRuleText(PaymentMethod method) {
+  final parts = <String>[];
+  if (method.handlingFeePercent > 0) {
+    parts.add('${decimalText(method.handlingFeePercent)}%');
+  }
+  if (method.handlingFeeFixedCents > 0) {
+    parts.add(priceText(method.handlingFeeFixedCents));
+  }
+  return parts.join(' + ');
+}
+
+String decimalText(double value) {
+  if (value == value.roundToDouble()) {
+    return value.toStringAsFixed(0);
+  }
+  return value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
 }
 
 String storeOrderPlanName(StoreOrder order) {

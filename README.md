@@ -81,3 +81,34 @@ keli-client/
 - 邀请和佣金流程
 - 完整自定义规则编辑器
 - 客户端自己解析所有协议，优先由面板生成 sing-box 配置
+
+## 验证
+
+本地改动至少运行：
+
+```powershell
+.\scripts\verify.ps1
+```
+
+涉及 Android 原生桥接或 VPN 流程时运行：
+
+```powershell
+.\scripts\verify.ps1 -BuildAndroid
+```
+
+涉及 Windows helper、系统代理或桌面启动流程时运行：
+
+```powershell
+.\scripts\verify.ps1 -BuildWindows
+```
+
+GitHub Actions 会在 `app/**`、`docs/**`、`README.md` 变更时自动执行 Flutter analyze、Flutter test、Android debug build 和 Windows debug build。完整 Android 模拟器安装和 `KeliVpnService` 启动 smoke 仍保留在手动 workflow，避免普通 PR 每次都拉取原生核心和启动模拟器。
+
+## 会话安全
+
+客户端保存登录会话时会优先保护 `auth_data`：
+
+- Windows: 使用当前 Windows 用户的 DPAPI 保护。
+- Android: 使用 Android Keystore AES-GCM 保护。
+
+旧版本已经写入的明文 `session.json` 仍可读取；用户重新登录或会话重新保存后会迁移为受保护字段。

@@ -1562,6 +1562,7 @@ class WindowsCoreManager implements CoreManager {
     required _LatencyTestProfile profile,
   }) async {
     Object? lastError;
+    Object? proxyMissingError;
     var onlyReachabilityFailures = true;
     for (final proxyName in proxyNames) {
       try {
@@ -1581,14 +1582,18 @@ class WindowsCoreManager implements CoreManager {
           continue;
         }
         if (message.contains('HTTP 404')) {
+          proxyMissingError = error;
           continue;
         }
         onlyReachabilityFailures = false;
         rethrow;
       }
     }
+    if (proxyMissingError != null) {
+      throw CoreException('$proxyMissingError');
+    }
     if (onlyReachabilityFailures && lastError != null) {
-      return null;
+      throw CoreException('节点超时: $lastError');
     }
     if (lastError != null) {
       throw CoreException('$lastError');
