@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../app_metadata.dart';
 import '../models.dart';
 import '../state/app_controller.dart';
 import '../theme.dart';
@@ -499,7 +500,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.18',
+            Text(keliClientDisplayVersion,
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../app_metadata.dart';
 import '../models.dart';
 
 abstract interface class KeliApi {
@@ -384,7 +385,7 @@ class RealKeliApi implements KeliApi {
     final request =
         await _client.openUrl(method, uri).timeout(const Duration(seconds: 20));
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-    request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
+    request.headers.set(HttpHeaders.userAgentHeader, keliClientUserAgent);
     if (authenticated) {
       final authData = _session?.authData;
       if (authData == null || authData.isEmpty) {

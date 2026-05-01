@@ -75,6 +75,7 @@ class AppController extends ChangeNotifier {
   DateTime? _connectedAt;
   DateTime? _lastAutoLatencyTestAt;
   int? _lastAutoLatencyNodeSignature;
+  bool _disposed = false;
   final Set<int> _latencyAttemptedNodeIds = <int>{};
 
   ProxyNode? get selectedNode {
@@ -950,6 +951,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshDiagnostics({bool logResult = true}) async {
+    if (_disposed) {
+      return;
+    }
     isRefreshingDiagnostics = true;
     notifyListeners();
     try {
@@ -963,7 +967,9 @@ class AppController extends ChangeNotifier {
       }
     } finally {
       isRefreshingDiagnostics = false;
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     }
   }
 
@@ -1053,6 +1059,7 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _stopRuntimeTimer();
     unawaited(coreManager.disconnect());
     super.dispose();
