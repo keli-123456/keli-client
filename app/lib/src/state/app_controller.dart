@@ -702,7 +702,10 @@ class AppController extends ChangeNotifier {
     } catch (error) {
       _stopRuntimeTimer();
       connectionState = ConnectionStateKind.error;
-      _log('ERROR', '连接失败: $error');
+      final reason = connectionFailureReason(error);
+      lastError = reason;
+      _log('ERROR', '连接失败：$reason · $error');
+      unawaited(refreshDiagnostics(logResult: false));
     } finally {
       notifyListeners();
     }
@@ -1064,6 +1067,11 @@ class AppController extends ChangeNotifier {
         ..writeln('config_check: ${diagnostic.configCheckStatus}')
         ..writeln('config_check_output:')
         ..writeln(diagnostic.configCheckOutput)
+        ..writeln('details:');
+      for (final entry in diagnostic.detailItems.entries) {
+        buffer.writeln('${entry.key}: ${entry.value}');
+      }
+      buffer
         ..writeln('log_tail:')
         ..writeln(diagnostic.logTail.join('\n'));
     } else {
@@ -1181,6 +1189,43 @@ String latencyFailureSummary(Map<String, List<String>> failures) {
     final suffix = entry.value.length > 3 ? ' 等' : '';
     return '${entry.key} ${entry.value.length} 个（$samples$suffix）';
   }).join('；');
+}
+
+String connectionFailureReason(Object error) {
+  final message = '$error';
+  if (message.contains('VPN 权限') ||
+      message.contains('VPN permission') ||
+      message.contains('missing vpn permission') ||
+      message.contains('permission requested')) {
+    return 'VPN 未授权';
+  }
+  if (message.contains('核心 AAR 未打包') ||
+      message.contains('core AAR is not bundled') ||
+      message.contains('core is missing') ||
+      message.contains('missing-core')) {
+    return '移动端核心缺失';
+  }
+  if (message.contains('配置为空') ||
+      message.contains('config is empty') ||
+      message.contains('配置尚未写入')) {
+    return '配置为空';
+  }
+  if (message.contains('启动超时')) {
+    return 'VPN 服务启动超时';
+  }
+  if (message.contains('revoked')) {
+    return 'VPN 权限被撤销';
+  }
+  if (message.contains('缺少真实节点出站')) {
+    return '配置缺少出站';
+  }
+  if (message.contains('Clash API 未就绪')) {
+    return '核心 API 未就绪';
+  }
+  if (message.contains('status error') || message.contains('状态 error')) {
+    return '核心启动失败';
+  }
+  return '连接异常';
 }
 
 String byteRateText(int bytesPerSecond) {

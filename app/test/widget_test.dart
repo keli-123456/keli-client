@@ -71,6 +71,27 @@ void main() {
       await temp.delete(recursive: true);
     }
   });
+
+  test('connection failure reason classifies Android VPN startup issues', () {
+    expect(
+      connectionFailureReason(
+        const CoreException('Android VPNService 启动超时：状态 starting · 节点 测试'),
+      ),
+      'VPN 服务启动超时',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('Android sing-box config is empty'),
+      ),
+      '配置为空',
+    );
+    expect(
+      connectionFailureReason(
+        const CoreException('Android sing-box core is missing'),
+      ),
+      '移动端核心缺失',
+    );
+  });
 }
 
 class MockKeliApi implements KeliApi {

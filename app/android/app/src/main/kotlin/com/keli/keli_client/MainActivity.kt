@@ -52,6 +52,7 @@ class MainActivity : FlutterActivity() {
         getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
             .edit()
             .putString(KeliVpnService.KEY_CONFIG_PATH, configFile.path)
+            .putBoolean(KeliVpnService.KEY_RUNNING, false)
             .putString(KeliVpnService.KEY_STATUS, "configured")
             .putString(KeliVpnService.KEY_MESSAGE, "Config accepted by Android bridge")
             .apply()
@@ -80,7 +81,13 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        if (!KeliSingBoxRunnerFactory.hasEmbeddedCore()) {
+        val coreEmbedded = KeliSingBoxRunnerFactory.hasEmbeddedCore()
+        if (!coreEmbedded) {
+            updateBridgeStatus(
+                running = false,
+                status = "missing-core",
+                message = "Android sing-box core is missing. Put hiddify-core.aar in android/app/libs and rebuild."
+            )
             result.success(
                 mapOf(
                     "connected" to false,
@@ -92,8 +99,32 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        val prefs = getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
         val config = call.argument<String>("config").orEmpty()
         val configPath = call.argument<String>("config_path")
+            ?: prefs.getString(KeliVpnService.KEY_CONFIG_PATH, null)
+        val configReady = config.isNotBlank() || configPath?.let {
+            runCatching { java.io.File(it).length() > 0 }.getOrDefault(false)
+        } == true
+        if (!configReady) {
+            updateBridgeStatus(
+                running = false,
+                status = "config-error",
+                message = "Android sing-box config is empty"
+            )
+            result.success(
+                mapOf(
+                    "connected" to false,
+                    "started" to false,
+                    "prepared" to true,
+                    "coreEmbedded" to true,
+                    "configReady" to false,
+                    "message" to "Android sing-box config is empty"
+                )
+            )
+            return
+        }
+
         val nodeName = call.argument<String>("node_name").orEmpty()
         val serviceIntent = Intent(this, KeliVpnService::class.java).apply {
             action = KeliVpnService.ACTION_START
@@ -101,17 +132,40 @@ class MainActivity : FlutterActivity() {
             putExtra(KeliVpnService.EXTRA_CONFIG_PATH, configPath)
             putExtra(KeliVpnService.EXTRA_NODE_NAME, nodeName)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        updateBridgeStatus(
+            running = false,
+            status = "starting",
+            message = "Starting ${nodeName.ifBlank { "Keli Client" }}"
+        )
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        } catch (error: Throwable) {
+            val message = error.message ?: error::class.java.simpleName
+            updateBridgeStatus(running = false, status = "error", message = message)
+            result.success(
+                mapOf(
+                    "connected" to false,
+                    "started" to false,
+                    "prepared" to true,
+                    "coreEmbedded" to true,
+                    "configReady" to true,
+                    "message" to message
+                )
+            )
+            return
         }
         result.success(
             mapOf(
-                "connected" to true,
+                "connected" to false,
+                "started" to true,
                 "prepared" to true,
                 "coreEmbedded" to true,
-                "message" to "Android sing-box VPN started"
+                "configReady" to true,
+                "message" to "Android sing-box VPN service starting"
             )
         )
     }
@@ -131,13 +185,33 @@ class MainActivity : FlutterActivity() {
 
     private fun handleStatus(result: MethodChannel.Result) {
         val prefs = getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
+        val configPath = prefs.getString(KeliVpnService.KEY_CONFIG_PATH, null)
+        val configFile = configPath?.let { java.io.File(it) }
+        val vpnPrepared = VpnService.prepare(this) == null
+        val coreEmbedded = KeliSingBoxRunnerFactory.hasEmbeddedCore()
         result.success(
             mapOf(
-                "coreEmbedded" to KeliSingBoxRunnerFactory.hasEmbeddedCore(),
+                "coreEmbedded" to coreEmbedded,
+                "vpnPrepared" to vpnPrepared,
+                "permissionRequired" to !vpnPrepared,
                 "running" to prefs.getBoolean(KeliVpnService.KEY_RUNNING, false),
                 "status" to prefs.getString(KeliVpnService.KEY_STATUS, "idle"),
-                "message" to prefs.getString(KeliVpnService.KEY_MESSAGE, "Android bridge idle")
+                "message" to prefs.getString(KeliVpnService.KEY_MESSAGE, "Android bridge idle"),
+                "configPath" to configPath,
+                "configExists" to (configFile?.exists() == true),
+                "configBytes" to (configFile?.length() ?: 0L),
+                "supportsLatencyTesting" to false,
+                "nodeName" to prefs.getString(KeliVpnService.KEY_NODE_NAME, "")
             )
         )
+    }
+
+    private fun updateBridgeStatus(running: Boolean, status: String, message: String) {
+        getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
+            .edit()
+            .putBoolean(KeliVpnService.KEY_RUNNING, running)
+            .putString(KeliVpnService.KEY_STATUS, status)
+            .putString(KeliVpnService.KEY_MESSAGE, message)
+            .apply()
     }
 }

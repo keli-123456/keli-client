@@ -88,6 +88,7 @@ class AndroidCoreManager implements CoreManager {
   bool _running = false;
   String _status = 'idle';
   String? _lastMessage;
+  String? _nativeConfigPath;
 
   Directory get _configDir =>
       Directory('${runtimeRoot.path}${Platform.pathSeparator}config');
@@ -129,6 +130,7 @@ class AndroidCoreManager implements CoreManager {
     _configApplied = result['applied'] != false;
     _status = _configApplied ? 'configured' : 'config-error';
     _lastMessage = result['message'] as String?;
+    _nativeConfigPath = _stringValue(result['configPath']) ?? _nativeConfigPath;
     return CoreApplyResult(
       configFile: _configFile,
       localProxyPort: 0,
@@ -147,24 +149,28 @@ class AndroidCoreManager implements CoreManager {
     final result = await _invokeMap(
       'connect',
       <String, Object?>{
-        'config_path': _configFile.path,
+        'config_path': _nativeConfigPath ?? _configFile.path,
         'node_id': node.id,
         'node_name': node.name,
         'mode': mode.name,
       },
     );
     _prepared = result['prepared'] == true || _prepared;
-    _running = result['connected'] == true;
-    _status = _running ? 'running' : 'not-running';
     _lastMessage = result['message'] as String?;
     if (result['permissionRequired'] == true) {
       throw const CoreException('需要先授予 Android VPN 权限，请确认系统弹窗后再连接');
     }
-    if (!_running) {
-      throw CoreException(
-        _lastMessage ?? 'Android VPNService 已接入，sing-box 移动端内核尚未绑定',
-      );
+    if (result['coreEmbedded'] == false) {
+      throw CoreException(_lastMessage ?? 'Android 核心 AAR 未打包');
     }
+    if (result['configReady'] == false) {
+      throw CoreException(_lastMessage ?? 'Android sing-box 配置为空');
+    }
+    if (result['started'] == false && result['connected'] != true) {
+      throw CoreException(_lastMessage ?? 'Android VPNService 启动失败');
+    }
+    final status = await _waitForRunningStatus(nodeName: node.name);
+    _updateStatusCache(status);
   }
 
   @override
@@ -214,13 +220,19 @@ class AndroidCoreManager implements CoreManager {
     final configExists = await _configFile.exists();
     final nativeStatus = status['status'] as String?;
     final coreEmbedded = status['coreEmbedded'] == true;
+    final nativeConfigPath = _stringValue(status['configPath']);
+    final nativeConfigExists = status['configExists'] == true;
+    final nativeConfigBytes = _intValue(status['configBytes']) ?? 0;
+    if (nativeConfigPath != null && nativeConfigPath.isNotEmpty) {
+      _nativeConfigPath = nativeConfigPath;
+    }
     return CoreDiagnostics(
       updatedAt: DateTime.now(),
       runtimeRoot: runtimeRoot.path,
       corePath: 'Android VPNService',
       coreExists: coreEmbedded,
-      configPath: _configFile.path,
-      configExists: configExists,
+      configPath: nativeConfigPath ?? _configFile.path,
+      configExists: nativeConfigExists || configExists,
       logPath: '',
       logExists: false,
       processRunning: status['running'] == true || _running,
@@ -235,7 +247,116 @@ class AndroidCoreManager implements CoreManager {
           _lastMessage ??
           (coreEmbedded ? 'Android VPN 通道已初始化' : 'Android 核心 AAR 未打包'),
       logTail: const [],
+      detailItems: <String, String>{
+        'VPN 权限': status['vpnPrepared'] == true ? '已授权' : '未授权',
+        '移动端核心': coreEmbedded ? '已打包' : '缺失',
+        '平台测速': supportsLatencyTesting ? '支持' : '不支持',
+        'VPN Service': _androidRunningText(status),
+        '原生配置': nativeConfigExists
+            ? '已写入 (${_byteCountText(nativeConfigBytes)})'
+            : '未写入',
+        '节点': _stringValue(status['nodeName'])?.isNotEmpty == true
+            ? _stringValue(status['nodeName'])!
+            : '-',
+      },
     );
+  }
+
+  Future<Map<String, Object?>> _waitForRunningStatus({
+    required String nodeName,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    Map<String, Object?> latest = const <String, Object?>{};
+    while (DateTime.now().isBefore(deadline)) {
+      latest = await _invokeMap('status');
+      _updateStatusCache(latest);
+      if (latest['permissionRequired'] == true) {
+        throw const CoreException('需要先授予 Android VPN 权限，请确认系统弹窗后再连接');
+      }
+      if (latest['running'] == true) {
+        return latest;
+      }
+      final status = _stringValue(latest['status']) ?? '';
+      if (status == 'error' ||
+          status == 'revoked' ||
+          status == 'missing-core' ||
+          status == 'config-error') {
+        throw CoreException(_androidStatusMessage(latest));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    }
+    throw CoreException(
+      'Android VPNService 启动超时：${_androidStatusMessage(latest, fallbackNodeName: nodeName)}',
+    );
+  }
+
+  void _updateStatusCache(Map<String, Object?> status) {
+    _running = status['running'] == true;
+    _prepared = status['vpnPrepared'] == true || _prepared;
+    _status =
+        _stringValue(status['status']) ?? (_running ? 'running' : _status);
+    _lastMessage = _stringValue(status['message']) ?? _lastMessage;
+    final nativeConfigPath = _stringValue(status['configPath']);
+    if (nativeConfigPath != null && nativeConfigPath.isNotEmpty) {
+      _nativeConfigPath = nativeConfigPath;
+    }
+  }
+
+  String _androidStatusMessage(
+    Map<String, Object?> status, {
+    String? fallbackNodeName,
+  }) {
+    final message = _stringValue(status['message']);
+    final nativeStatus = _stringValue(status['status']);
+    final nodeName = _stringValue(status['nodeName']) ?? fallbackNodeName;
+    final parts = <String>[
+      if (nativeStatus != null && nativeStatus.isNotEmpty) '状态 $nativeStatus',
+      if (message != null && message.isNotEmpty) message,
+      if (nodeName != null && nodeName.isNotEmpty) '节点 $nodeName',
+    ];
+    return parts.isEmpty ? 'Android VPNService 未进入运行状态' : parts.join(' · ');
+  }
+
+  String _androidRunningText(Map<String, Object?> status) {
+    if (status['running'] == true) {
+      return '运行中';
+    }
+    final nativeStatus = _stringValue(status['status']);
+    if (nativeStatus == null || nativeStatus.isEmpty) {
+      return '未运行';
+    }
+    return nativeStatus;
+  }
+
+  String? _stringValue(Object? value) => value == null ? null : '$value';
+
+  int? _intValue(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return num.tryParse(value)?.toInt();
+    }
+    return null;
+  }
+
+  String _byteCountText(int bytes) {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(1)} MB';
   }
 
   Future<Map<String, Object?>> _invokeMap(

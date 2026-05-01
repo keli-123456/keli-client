@@ -20,6 +20,7 @@ class KeliVpnService : VpnService() {
         const val KEY_RUNNING = "running"
         const val KEY_STATUS = "status"
         const val KEY_MESSAGE = "message"
+        const val KEY_NODE_NAME = "node_name"
 
         private const val CHANNEL_ID = "keli_vpn"
         private const val NOTIFICATION_ID = 17021
@@ -43,6 +44,10 @@ class KeliVpnService : VpnService() {
             ACTION_START -> {
                 val nodeName = intent.getStringExtra(EXTRA_NODE_NAME).orEmpty()
                 val config = resolveConfig(intent)
+                getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_NODE_NAME, nodeName)
+                    .apply()
                 startForeground(
                     NOTIFICATION_ID,
                     buildNotification("正在连接", nodeName.ifBlank { "Keli Client" })
@@ -54,6 +59,13 @@ class KeliVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        if (currentStatus() == "error") {
+            runCatching { runner?.stop() }
+            runner = null
+            clearForeground()
+            super.onDestroy()
+            return
+        }
         stopVpn("stopped", "Android VPN service stopped", finishSelf = false)
         super.onDestroy()
     }
@@ -77,6 +89,9 @@ class KeliVpnService : VpnService() {
                 status = "error",
                 message = error.message ?: error::class.java.simpleName
             )
+            runCatching { runner?.stop() }
+            runner = null
+            clearForeground()
             stopSelf()
         }
     }
@@ -85,14 +100,20 @@ class KeliVpnService : VpnService() {
         runCatching { runner?.stop() }
         runner = null
         updateStatus(running = false, status = status, message = message)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        clearForeground()
         if (finishSelf) {
             stopSelf()
+        }
+    }
+
+    private fun clearForeground() {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
         }
     }
 
@@ -115,7 +136,20 @@ class KeliVpnService : VpnService() {
             .putBoolean(KEY_RUNNING, running)
             .putString(KEY_STATUS, status)
             .putString(KEY_MESSAGE, message)
+            .putString(KEY_NODE_NAME, currentNodeName())
             .apply()
+    }
+
+    private fun currentStatus(): String {
+        return getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getString(KEY_STATUS, "idle")
+            .orEmpty()
+    }
+
+    private fun currentNodeName(): String {
+        return getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getString(KEY_NODE_NAME, "")
+            .orEmpty()
     }
 
     private fun ensureNotificationChannel() {

@@ -452,6 +452,7 @@ class CoreDiagnostics {
     required this.configCheckStatus,
     required this.configCheckOutput,
     required this.logTail,
+    this.detailItems = const <String, String>{},
   });
 
   final DateTime updatedAt;
@@ -472,8 +473,11 @@ class CoreDiagnostics {
   final String configCheckStatus;
   final String configCheckOutput;
   final List<String> logTail;
+  final Map<String, String> detailItems;
 
-  String get localProxyAddress => '$localProxyListen:$localProxyPort';
+  String get localProxyAddress => localProxyPort <= 0
+      ? localProxyListen
+      : '$localProxyListen:$localProxyPort';
 
   String get localProxyDisplay => '$localProxyType://$localProxyAddress';
 }

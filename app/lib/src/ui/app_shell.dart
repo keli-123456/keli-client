@@ -6729,6 +6729,8 @@ class _LogsScreenState extends State<LogsScreen> {
                     value: diagnostics.logExists ? diagnostics.logPath : '未生成'),
                 DiagnosticRow(
                     label: '系统代理', value: diagnostics.systemProxyServer ?? '-'),
+                for (final entry in diagnostics.detailItems.entries)
+                  DiagnosticRow(label: entry.key, value: entry.value),
                 DiagnosticRow(
                     label: '更新时间', value: timeText(diagnostics.updatedAt)),
               ],
