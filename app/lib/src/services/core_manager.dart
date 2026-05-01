@@ -1134,9 +1134,9 @@ class WindowsCoreManager implements CoreManager {
   _LatencyTestProfile _latencyProfile(LatencyTestMode mode) {
     return switch (mode) {
       LatencyTestMode.quick => const _LatencyTestProfile(
-          apiReadyTimeout: Duration(seconds: 5),
-          requestTimeout: Duration(milliseconds: 3600),
-          delayTimeoutMs: 2500,
+          apiReadyTimeout: Duration(seconds: 4),
+          requestTimeout: Duration(milliseconds: 2200),
+          delayTimeoutMs: 1600,
           maxProxyCandidates: 2,
           urls: <String>[
             'https://cp.cloudflare.com/generate_204',

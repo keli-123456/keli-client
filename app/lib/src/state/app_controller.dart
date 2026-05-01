@@ -7,10 +7,12 @@ import '../services/core_manager.dart';
 import '../services/keli_api.dart';
 import '../services/session_store.dart';
 
-const int latencyBatchQuickConcurrency = 16;
+const int latencyBatchQuickConcurrency = 32;
 const int latencyBatchRetryConcurrency = 6;
-const int latencyFallbackQuickConcurrency = 4;
+const int latencyFallbackQuickConcurrency = 8;
 const int latencyFallbackRetryConcurrency = 2;
+const Duration latencyAutoUntestedCooldown = Duration(seconds: 12);
+const Duration latencyAutoRetestCooldown = Duration(minutes: 3);
 
 class _LatencyMeasurement {
   const _LatencyMeasurement({
@@ -71,6 +73,9 @@ class AppController extends ChangeNotifier {
   Timer? _runtimeTimer;
   StreamSubscription<CoreTrafficSample>? _trafficSubscription;
   DateTime? _connectedAt;
+  DateTime? _lastAutoLatencyTestAt;
+  int? _lastAutoLatencyNodeSignature;
+  final Set<int> _latencyAttemptedNodeIds = <int>{};
 
   ProxyNode? get selectedNode {
     for (final node in nodes) {
@@ -103,6 +108,34 @@ class AppController extends ChangeNotifier {
     return null;
   }
 
+  bool latencyAttemptedFor(int nodeId) {
+    return _latencyAttemptedNodeIds.contains(nodeId);
+  }
+
+  bool get shouldAutoTestLatency {
+    if (nodes.isEmpty || isTestingLatency) {
+      return false;
+    }
+    final onlineNodes = nodes.where((node) => node.isOnline).toList();
+    if (onlineNodes.isEmpty) {
+      return false;
+    }
+    final hasUntested =
+        onlineNodes.any((node) => !_latencyAttemptedNodeIds.contains(node.id));
+    final now = DateTime.now();
+    final last = _lastAutoLatencyTestAt;
+    if (last == null) {
+      return true;
+    }
+    final signature = _latencyNodeSignature();
+    if (signature != _lastAutoLatencyNodeSignature) {
+      return true;
+    }
+    final cooldown =
+        hasUntested ? latencyAutoUntestedCooldown : latencyAutoRetestCooldown;
+    return now.difference(last) >= cooldown;
+  }
+
   Future<void> bootstrap() async {
     isBootstrapping = true;
     lastError = null;
@@ -111,6 +144,12 @@ class AppController extends ChangeNotifier {
       final payload = await api.bootstrap();
       profile = payload.profile;
       nodes = payload.nodes;
+      _latencyAttemptedNodeIds
+        ..clear()
+        ..addAll(nodes
+            .where((node) => node.latencyMs != null)
+            .map((node) => node.id));
+      _lastAutoLatencyNodeSignature = _latencyNodeSignature();
       if (nodes.isNotEmpty) {
         selectedNodeId = nodes.first.id;
       }
@@ -191,6 +230,9 @@ class AppController extends ChangeNotifier {
     selectedPaymentMethodId = null;
     discountUpgradeEnabled = false;
     nodes = const [];
+    _latencyAttemptedNodeIds.clear();
+    _lastAutoLatencyTestAt = null;
+    _lastAutoLatencyNodeSignature = null;
     selectedPage = 0;
     _log('INFO', '已退出登录');
     notifyListeners();
@@ -210,6 +252,19 @@ class AppController extends ChangeNotifier {
     proxyMode = mode;
     _log('INFO', '代理模式切换为 ${mode.label}');
     notifyListeners();
+  }
+
+  int _latencyNodeSignature() {
+    return Object.hashAll(nodes.map((node) => Object.hash(node.id, node.name)));
+  }
+
+  Future<void> autoTestLatencyOnNodeListOpen({bool force = false}) async {
+    if (!force && !shouldAutoTestLatency) {
+      return;
+    }
+    _lastAutoLatencyTestAt = DateTime.now();
+    _lastAutoLatencyNodeSignature = _latencyNodeSignature();
+    await testAllLatency(automatic: true, retryFailures: false);
   }
 
   void selectPaymentMethod(String? methodId) {
@@ -658,15 +713,24 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> testAllLatency() async {
+  Future<void> testAllLatency({
+    bool automatic = false,
+    bool retryFailures = true,
+  }) async {
     if (isTestingLatency) {
       return;
     }
     isTestingLatency = true;
-    _log('INFO', '开始测试节点延迟，优先使用批量核心复用');
-    notifyListeners();
     final snapshot = List<ProxyNode>.of(nodes);
     final updated = List<ProxyNode>.of(snapshot);
+    _latencyAttemptedNodeIds.addAll(
+      snapshot.where((node) => node.isOnline).map((node) => node.id),
+    );
+    _log(
+      'INFO',
+      automatic ? '打开节点列表，自动快测节点延迟' : '开始测试节点延迟，优先使用批量核心复用',
+    );
+    notifyListeners();
     final finalFailures = <String, List<String>>{};
     var measured = 0;
     Map<String, Object?>? batchConfig;
@@ -778,7 +842,7 @@ class AppController extends ChangeNotifier {
         concurrency: latencyBatchQuickConcurrency,
         collectFailures: false,
       );
-      if (failedAfterQuick.isNotEmpty) {
+      if (failedAfterQuick.isNotEmpty && retryFailures) {
         _log('INFO',
             '快测完成，成功 $measured/${snapshot.length} 个，重试 ${failedAfterQuick.length} 个');
         await runPass(
@@ -787,9 +851,16 @@ class AppController extends ChangeNotifier {
           concurrency: latencyBatchRetryConcurrency,
           collectFailures: true,
         );
+      } else if (failedAfterQuick.isNotEmpty) {
+        _log('INFO', '自动快测完成，成功 $measured/${snapshot.length} 个，未成功节点可手动全部测速重试');
       }
       if (measured == 0) {
-        _log('WARN', '真实节点测速未成功：${latencyFailureSummary(finalFailures)}');
+        _log(
+          'WARN',
+          retryFailures
+              ? '真实节点测速未成功：${latencyFailureSummary(finalFailures)}'
+              : '自动快测暂无成功节点，建议手动全部测速或检查核心配置',
+        );
       } else {
         _log('INFO', '延迟测试完成，成功 $measured/${snapshot.length} 个');
         if (finalFailures.isNotEmpty) {
@@ -831,6 +902,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     isTestingLatency = true;
+    _latencyAttemptedNodeIds.add(node.id);
     _log('INFO', '开始测试当前节点 ${node.name}');
     notifyListeners();
     try {

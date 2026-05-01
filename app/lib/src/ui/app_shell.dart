@@ -499,7 +499,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.15',
+            Text('v0.1.16',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -1503,8 +1503,8 @@ class _CurrentNodePanel extends StatelessWidget {
               Expanded(
                   child: _NodeStatCell(
                       label: '延迟',
-                      value: latencyText(n?.latencyMs),
-                      color: latencyStatusColor(n?.latencyMs))),
+                      value: nodeLatencyText(controller, n),
+                      color: nodeLatencyStatusColor(controller, n))),
               const SizedBox(width: 8),
               Expanded(
                   child: _NodeStatCell(
@@ -1567,6 +1567,21 @@ class _NodePickerDialog extends StatefulWidget {
 
 class _NodePickerDialogState extends State<_NodePickerDialog> {
   String query = '';
+  bool autoLatencyQueued = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (autoLatencyQueued) {
+      return;
+    }
+    autoLatencyQueued = true;
+    Future<void>.microtask(() {
+      if (mounted) {
+        return AppControllerScope.of(context).autoTestLatencyOnNodeListOpen();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1699,7 +1714,8 @@ class _NodePickerRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final latencyColor = latencyStatusColor(node.latencyMs);
+    final controller = AppControllerScope.of(context);
+    final latencyColor = nodeLatencyStatusColor(controller, node);
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: onTap,
@@ -1742,7 +1758,7 @@ class _NodePickerRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                latencyText(node.latencyMs),
+                nodeLatencyText(controller, node),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -2489,6 +2505,21 @@ class NodesScreen extends StatefulWidget {
 
 class _NodesScreenState extends State<NodesScreen> {
   String query = '';
+  bool autoLatencyQueued = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (autoLatencyQueued) {
+      return;
+    }
+    autoLatencyQueued = true;
+    Future<void>.microtask(() {
+      if (mounted) {
+        return AppControllerScope.of(context).autoTestLatencyOnNodeListOpen();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2597,7 +2628,7 @@ class NodeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
-    final latencyColor = latencyStatusColor(node.latencyMs);
+    final latencyColor = nodeLatencyStatusColor(controller, node);
     if (isDesktop) {
       return InkWell(
         onTap: () => controller.selectNode(node),
@@ -2642,7 +2673,7 @@ class NodeRow extends StatelessWidget {
               SizedBox(
                 width: 110,
                 child: Text(
-                  latencyText(node.latencyMs),
+                  nodeLatencyText(controller, node),
                   style: TextStyle(
                       color: latencyColor, fontWeight: FontWeight.w900),
                 ),
@@ -2723,7 +2754,7 @@ class NodeRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                latencyText(node.latencyMs),
+                nodeLatencyText(controller, node),
                 style: TextStyle(
                     color: latencyColor,
                     fontWeight: FontWeight.w800,
@@ -7533,6 +7564,22 @@ String latencyText(int? latencyMs) {
   return '${latencyMs}ms';
 }
 
+String nodeLatencyText(AppController controller, ProxyNode? node) {
+  if (node == null) {
+    return '-';
+  }
+  if (node.latencyMs != null) {
+    return latencyText(node.latencyMs);
+  }
+  if (controller.isTestingLatency && controller.latencyAttemptedFor(node.id)) {
+    return '测速中';
+  }
+  if (controller.latencyAttemptedFor(node.id)) {
+    return '超时';
+  }
+  return '未测';
+}
+
 List<PlanPeriodOption> recurringOptions(StorePlan plan) {
   return plan.periodOptions
       .where((option) =>
@@ -7810,6 +7857,22 @@ Color latencyStatusColor(int? latencyMs) {
     return keliOrange;
   }
   return keliGreen;
+}
+
+Color nodeLatencyStatusColor(AppController controller, ProxyNode? node) {
+  if (node == null) {
+    return keliMuted;
+  }
+  if (node.latencyMs != null) {
+    return latencyStatusColor(node.latencyMs);
+  }
+  if (controller.isTestingLatency && controller.latencyAttemptedFor(node.id)) {
+    return keliBlueStrong;
+  }
+  if (controller.latencyAttemptedFor(node.id)) {
+    return keliRed;
+  }
+  return keliMuted;
 }
 
 String timeText(DateTime time) {
