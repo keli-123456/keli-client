@@ -7554,13 +7554,32 @@ String nodeLatencyText(AppController controller, ProxyNode? node) {
   if (node.latencyMs != null) {
     return latencyText(node.latencyMs);
   }
+  final failure = controller.latencyFailureFor(node.id);
   if (controller.isTestingLatency && controller.latencyAttemptedFor(node.id)) {
     return '测速中';
   }
+  if (failure != null) {
+    return latencyFailureBadgeText(failure);
+  }
   if (controller.latencyAttemptedFor(node.id)) {
-    return '超时';
+    return '未测';
   }
   return '未测';
+}
+
+String latencyFailureBadgeText(String reason) {
+  return switch (reason) {
+    '节点超时' => '超时',
+    '核心 API 未就绪' => 'API未就绪',
+    '核心 API 未返回该代理' => '无代理',
+    '配置缺少出站' => '无出站',
+    '测速核心启动失败' => '核心失败',
+    '平台暂不支持测速' => '不可测',
+    'VPN 未授权' => '未授权',
+    '移动端核心缺失' => '缺核心',
+    '未返回延迟' => '未返回',
+    _ => '失败',
+  };
 }
 
 List<PlanPeriodOption> recurringOptions(StorePlan plan) {
@@ -7867,13 +7886,32 @@ Color nodeLatencyStatusColor(AppController controller, ProxyNode? node) {
   if (node.latencyMs != null) {
     return latencyStatusColor(node.latencyMs);
   }
+  final failure = controller.latencyFailureFor(node.id);
   if (controller.isTestingLatency && controller.latencyAttemptedFor(node.id)) {
     return keliBlueStrong;
   }
+  if (failure != null) {
+    return latencyFailureStatusColor(failure);
+  }
   if (controller.latencyAttemptedFor(node.id)) {
-    return keliRed;
+    return keliMuted;
   }
   return keliMuted;
+}
+
+Color latencyFailureStatusColor(String reason) {
+  return switch (reason) {
+    '节点超时' => keliRed,
+    '核心 API 未就绪' => keliOrange,
+    '核心 API 未返回该代理' => keliOrange,
+    '配置缺少出站' => keliOrange,
+    '测速核心启动失败' => keliRed,
+    '平台暂不支持测速' => keliMuted,
+    'VPN 未授权' => keliOrange,
+    '移动端核心缺失' => keliRed,
+    '未返回延迟' => keliMuted,
+    _ => keliRed,
+  };
 }
 
 String timeText(DateTime time) {

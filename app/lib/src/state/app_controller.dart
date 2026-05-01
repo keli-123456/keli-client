@@ -78,6 +78,7 @@ class AppController extends ChangeNotifier {
   int? _lastAutoLatencyNodeSignature;
   bool _disposed = false;
   final Set<int> _latencyAttemptedNodeIds = <int>{};
+  final Map<int, String> _latencyFailureReasons = <int, String>{};
 
   ProxyNode? get selectedNode {
     for (final node in nodes) {
@@ -114,8 +115,14 @@ class AppController extends ChangeNotifier {
     return _latencyAttemptedNodeIds.contains(nodeId);
   }
 
+  String? latencyFailureFor(int nodeId) {
+    return _latencyFailureReasons[nodeId];
+  }
+
   bool get shouldAutoTestLatency {
-    if (nodes.isEmpty || isTestingLatency) {
+    if (nodes.isEmpty ||
+        isTestingLatency ||
+        !coreManager.supportsLatencyTesting) {
       return false;
     }
     final onlineNodes = nodes.where((node) => node.isOnline).toList();
@@ -151,6 +158,7 @@ class AppController extends ChangeNotifier {
         ..addAll(nodes
             .where((node) => node.latencyMs != null)
             .map((node) => node.id));
+      _latencyFailureReasons.clear();
       _lastAutoLatencyNodeSignature = _latencyNodeSignature();
       if (nodes.isNotEmpty) {
         selectedNodeId = nodes.first.id;
@@ -233,6 +241,7 @@ class AppController extends ChangeNotifier {
     discountUpgradeEnabled = false;
     nodes = const [];
     _latencyAttemptedNodeIds.clear();
+    _latencyFailureReasons.clear();
     _lastAutoLatencyTestAt = null;
     _lastAutoLatencyNodeSignature = null;
     selectedPage = 0;
@@ -723,6 +732,19 @@ class AppController extends ChangeNotifier {
     if (isTestingLatency) {
       return;
     }
+    if (!coreManager.supportsLatencyTesting) {
+      final reason = latencyFailureReason(
+        const CoreException('Android 当前暂不支持本地延迟测速：移动端核心未开放 Clash API'),
+      );
+      final onlineNodes = nodes.where((node) => node.isOnline).toList();
+      _latencyAttemptedNodeIds.addAll(onlineNodes.map((node) => node.id));
+      for (final node in onlineNodes) {
+        _latencyFailureReasons[node.id] = reason;
+      }
+      _log('WARN', '$reason：当前平台不会执行节点延迟测速，可用连接结果和诊断日志判断可用性');
+      notifyListeners();
+      return;
+    }
     isTestingLatency = true;
     final snapshot = List<ProxyNode>.of(nodes);
     final updated = List<ProxyNode>.of(snapshot);
@@ -775,12 +797,17 @@ class AppController extends ChangeNotifier {
               final latency = latencies[node.id];
               if (latency != null) {
                 measured++;
+                _latencyFailureReasons.remove(node.id);
               } else {
                 failed.add(index);
                 if (collectFailures) {
-                  finalFailures
-                      .putIfAbsent('未返回延迟', () => <String>[])
-                      .add(node.name);
+                  const reason = '未返回延迟';
+                  _latencyFailureReasons[node.id] = reason;
+                  finalFailures.putIfAbsent(reason, () => <String>[]).add(
+                        node.name,
+                      );
+                } else {
+                  _latencyFailureReasons.remove(node.id);
                 }
               }
               updated[index] = node.copyWith(
@@ -819,12 +846,16 @@ class AppController extends ChangeNotifier {
           for (final result in results) {
             if (result.latencyMs != null) {
               measured++;
+              _latencyFailureReasons.remove(result.node.id);
             } else {
               failed.add(result.index);
               if (collectFailures && result.failureReason != null) {
+                _latencyFailureReasons[result.node.id] = result.failureReason!;
                 finalFailures
                     .putIfAbsent(result.failureReason!, () => <String>[])
                     .add(result.node.name);
+              } else {
+                _latencyFailureReasons.remove(result.node.id);
               }
             }
             updated[result.index] = result.node.copyWith(
@@ -904,8 +935,19 @@ class AppController extends ChangeNotifier {
     if (node == null || isTestingLatency) {
       return;
     }
+    if (!coreManager.supportsLatencyTesting) {
+      final reason = latencyFailureReason(
+        const CoreException('Android 当前暂不支持本地延迟测速：移动端核心未开放 Clash API'),
+      );
+      _latencyAttemptedNodeIds.add(node.id);
+      _latencyFailureReasons[node.id] = reason;
+      _log('WARN', '当前节点测速未执行：$reason · ${node.name}');
+      notifyListeners();
+      return;
+    }
     isTestingLatency = true;
     _latencyAttemptedNodeIds.add(node.id);
+    _latencyFailureReasons.remove(node.id);
     _log('INFO', '开始测试当前节点 ${node.name}');
     notifyListeners();
     try {
@@ -922,12 +964,15 @@ class AppController extends ChangeNotifier {
               : item)
           .toList();
       if (latency == null) {
+        _latencyFailureReasons[node.id] = '未返回延迟';
         _log('WARN', '当前节点测速未成功: ${node.name}');
       } else {
+        _latencyFailureReasons.remove(node.id);
         _log('INFO', '当前节点测速完成: ${node.name} ${latency}ms');
       }
     } catch (error) {
       final reason = latencyFailureReason(error);
+      _latencyFailureReasons[node.id] = reason;
       _log('WARN', '当前节点测速未成功：$reason · ${node.name}');
     } finally {
       isTestingLatency = false;
@@ -1092,6 +1137,23 @@ class AppController extends ChangeNotifier {
 
 String latencyFailureReason(Object error) {
   final message = '$error';
+  if (message.contains('Android 当前暂不支持') || message.contains('暂不支持本地延迟测速')) {
+    return '平台暂不支持测速';
+  }
+  if (message.contains('VPN 权限') ||
+      message.contains('VPN permission') ||
+      message.contains('missing vpn permission')) {
+    return 'VPN 未授权';
+  }
+  if (message.contains('核心 AAR 未打包') ||
+      message.contains('core AAR is not bundled') ||
+      message.contains('core is missing') ||
+      message.contains('missing-core')) {
+    return '移动端核心缺失';
+  }
+  if (message.contains('Clash API 未就绪')) {
+    return '核心 API 未就绪';
+  }
   if (message.contains('HTTP 404')) {
     return '核心 API 未返回该代理';
   }
@@ -1100,9 +1162,6 @@ String latencyFailureReason(Object error) {
       message.contains('TimeoutException') ||
       message.contains('Timeout')) {
     return '节点超时';
-  }
-  if (message.contains('Clash API 未就绪')) {
-    return '核心 API 未就绪';
   }
   if (message.contains('缺少真实节点出站')) {
     return '配置缺少出站';

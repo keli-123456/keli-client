@@ -13,6 +13,8 @@ enum LatencyTestMode {
 }
 
 abstract interface class CoreManager {
+  bool get supportsLatencyTesting;
+
   Future<void> prepare();
 
   Future<CoreApplyResult> applyConfig(
@@ -91,6 +93,9 @@ class AndroidCoreManager implements CoreManager {
       Directory('${runtimeRoot.path}${Platform.pathSeparator}config');
   File get _configFile =>
       File('${_configDir.path}${Platform.pathSeparator}sing-box-android.json');
+
+  @override
+  bool get supportsLatencyTesting => false;
 
   @override
   Future<void> prepare() async {
@@ -177,7 +182,9 @@ class AndroidCoreManager implements CoreManager {
     ProxyMode mode = ProxyMode.system,
     LatencyTestMode testMode = LatencyTestMode.quick,
   }) async {
-    return null;
+    throw const CoreException(
+      'Android 当前暂不支持本地延迟测速：移动端核心未开放 Clash API',
+    );
   }
 
   @override
@@ -188,9 +195,9 @@ class AndroidCoreManager implements CoreManager {
     LatencyTestMode testMode = LatencyTestMode.quick,
     int concurrency = 5,
   }) async {
-    return <int, int?>{
-      for (final node in nodes) node.id: null,
-    };
+    throw const CoreException(
+      'Android 当前暂不支持本地延迟测速：移动端核心未开放 Clash API',
+    );
   }
 
   @override
@@ -248,6 +255,9 @@ class AndroidCoreManager implements CoreManager {
 }
 
 class UnsupportedCoreManager implements CoreManager {
+  @override
+  bool get supportsLatencyTesting => false;
+
   @override
   Future<void> prepare() async {}
 
@@ -353,6 +363,9 @@ class WindowsCoreManager implements CoreManager {
       File('${runtimeRoot.path}${Platform.pathSeparator}proxy-state.json');
   File get _coreExe =>
       File('${_coreDir.path}${Platform.pathSeparator}sing-box.exe');
+
+  @override
+  bool get supportsLatencyTesting => true;
 
   @override
   Future<void> prepare() async {

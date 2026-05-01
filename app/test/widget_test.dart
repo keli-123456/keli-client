@@ -29,9 +29,55 @@ void main() {
       await temp.delete(recursive: true);
     }
   });
+
+  test('latency failure reason keeps core API timeout distinct', () {
+    expect(
+      latencyFailureReason(
+        const CoreException(
+          'Clash API 未就绪: TimeoutException after 0:00:01.000000',
+        ),
+      ),
+      '核心 API 未就绪',
+    );
+  });
+
+  test('unsupported latency testing records a node-level reason', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final controller = AppController(
+      api: MockKeliApi(
+        nodes: const [
+          ProxyNode(
+            id: 1,
+            name: '测试节点',
+            protocol: 'Hysteria2',
+            rate: 1,
+            isOnline: true,
+            latencyMs: null,
+          ),
+        ],
+      ),
+      coreManager: UnsupportedLatencyCoreManager(),
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+      await controller.testAllLatency();
+
+      expect(controller.latencyAttemptedFor(1), isTrue);
+      expect(controller.latencyFailureFor(1), '平台暂不支持测速');
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
 }
 
 class MockKeliApi implements KeliApi {
+  const MockKeliApi({this.nodes = const []});
+
+  final List<ProxyNode> nodes;
+
   @override
   Future<BootstrapPayload> bootstrap() async {
     return BootstrapPayload(
@@ -43,7 +89,7 @@ class MockKeliApi implements KeliApi {
         totalTrafficGb: 100,
         resetDay: 1,
       ),
-      nodes: const [],
+      nodes: nodes,
     );
   }
 
@@ -135,6 +181,9 @@ class MockKeliApi implements KeliApi {
 
 class MockCoreManager implements CoreManager {
   @override
+  bool get supportsLatencyTesting => true;
+
+  @override
   Future<CoreApplyResult> applyConfig(
     Map<String, Object?> config, {
     ProxyMode mode = ProxyMode.system,
@@ -208,4 +257,9 @@ class MockCoreManager implements CoreManager {
   Stream<CoreTrafficSample> watchTraffic() {
     return const Stream<CoreTrafficSample>.empty();
   }
+}
+
+class UnsupportedLatencyCoreManager extends MockCoreManager {
+  @override
+  bool get supportsLatencyTesting => false;
 }
