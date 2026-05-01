@@ -533,7 +533,7 @@ class RealKeliApi implements KeliApi {
     return StorePlan(
       id: _intValue(raw['id']) ?? 0,
       name: _stringValue(raw['name']) ?? '未命名套餐',
-      content: _cleanText(_stringValue(raw['content']) ?? ''),
+      content: _stringValue(raw['content']) ?? '',
       prices: _parsePlanPrices(raw),
       transferEnable: (_numValue(raw['transfer_enable']) ?? 0).toDouble(),
       speedLimit: _numValue(raw['speed_limit'])?.toDouble(),
@@ -541,6 +541,7 @@ class RealKeliApi implements KeliApi {
       sell: raw.containsKey('sell') ? _boolValue(raw['sell']) : true,
       renew: raw.containsKey('renew') ? _boolValue(raw['renew']) : true,
       sort: _intValue(raw['sort']) ?? 999,
+      resetTrafficMethod: _intValue(raw['reset_traffic_method']),
       tags: _parseTags(raw['tags']),
     );
   }
@@ -707,60 +708,6 @@ class RealKeliApi implements KeliApi {
         }
       }
       return nodes;
-    }
-    return const [];
-  }
-
-  String _cleanText(String value) {
-    final normalized = value
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<[^>]+>'), '')
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .trim();
-    if (normalized.startsWith('[') || normalized.startsWith('{')) {
-      try {
-        final decoded = jsonDecode(normalized);
-        final lines = _contentLines(decoded);
-        if (lines.isNotEmpty) {
-          return lines.join(' · ');
-        }
-      } catch (_) {
-        return normalized;
-      }
-    }
-    return normalized;
-  }
-
-  List<String> _contentLines(Object? value) {
-    if (value is List) {
-      return value
-          .expand(_contentLines)
-          .where((line) => line.trim().isNotEmpty)
-          .toList();
-    }
-    if (value is Map) {
-      for (final key in [
-        'feature',
-        'title',
-        'name',
-        'label',
-        'value',
-        'content',
-        'description'
-      ]) {
-        final item = value[key];
-        if (item != null && '$item'.trim().isNotEmpty) {
-          return ['$item'.trim()];
-        }
-      }
-      return value.values
-          .map((item) => '$item'.trim())
-          .where((line) => line.isNotEmpty)
-          .toList();
-    }
-    if (value is String && value.trim().isNotEmpty) {
-      return [value.trim()];
     }
     return const [];
   }

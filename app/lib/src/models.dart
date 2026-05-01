@@ -120,6 +120,7 @@ class StorePlan {
     required this.sell,
     required this.renew,
     required this.sort,
+    this.resetTrafficMethod,
     this.tags = const [],
   });
 
@@ -133,6 +134,7 @@ class StorePlan {
   final bool sell;
   final bool renew;
   final int sort;
+  final int? resetTrafficMethod;
   final List<String> tags;
 
   List<PlanPeriodOption> get periodOptions {

@@ -499,7 +499,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.16',
+            Text('v0.1.17',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -3644,10 +3644,10 @@ class _StorePeriodPanel extends StatelessWidget {
             Text(title,
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            if (plan != null && plan!.content.isNotEmpty) ...[
+            if (plan != null) ...[
               const SizedBox(height: 8),
               Text(
-                plan!.content,
+                planSummaryText(plan!, trafficMode: trafficMode),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -3826,9 +3826,7 @@ class _StorePricingCard extends StatelessWidget {
           _PlanSpecRow(
               icon: Icons.devices_outlined,
               label: '设备',
-              value: plan.deviceLimit == null || plan.deviceLimit == 0
-                  ? '无限制'
-                  : '${plan.deviceLimit} 台'),
+              value: planDeviceLimitText(plan)),
           _PlanSpecRow(
               icon: Icons.wifi_rounded,
               label: trafficMode ? '流量' : '月流量',
@@ -3836,9 +3834,12 @@ class _StorePricingCard extends StatelessWidget {
           _PlanSpecRow(
               icon: Icons.rocket_launch_outlined,
               label: '速率',
-              value: plan.speedLimit == null || plan.speedLimit == 0
-                  ? '无限制'
-                  : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
+              value: planSpeedLimitText(plan)),
+          if (!trafficMode)
+            _PlanSpecRow(
+                icon: Icons.event_repeat_rounded,
+                label: '重置',
+                value: planResetText(plan)),
           const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
@@ -5356,16 +5357,10 @@ class _CheckoutSummary extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _CheckoutSummaryLine(label: '可用流量', value: plan.trafficLabel),
-          _CheckoutSummaryLine(
-              label: '允许设备',
-              value: plan.deviceLimit == null || plan.deviceLimit == 0
-                  ? '无限制'
-                  : '${plan.deviceLimit} 台'),
-          _CheckoutSummaryLine(
-              label: '最高网速',
-              value: plan.speedLimit == null || plan.speedLimit == 0
-                  ? '无限制'
-                  : '${plan.speedLimit!.toStringAsFixed(0)} Mbps'),
+          _CheckoutSummaryLine(label: '允许设备', value: planDeviceLimitText(plan)),
+          _CheckoutSummaryLine(label: '最高网速', value: planSpeedLimitText(plan)),
+          if (!isTrafficPeriod(option))
+            _CheckoutSummaryLine(label: '流量重置', value: planResetText(plan)),
         ],
       ),
     );
@@ -7597,16 +7592,46 @@ List<PlanPeriodOption> trafficOptions(StorePlan plan) {
 bool isTrafficPackPlan(StorePlan plan) {
   final hasRecurring = recurringOptions(plan).isNotEmpty;
   final hasTraffic = trafficOptions(plan).isNotEmpty;
-  if (!hasRecurring && hasTraffic) {
-    return true;
-  }
+  return hasTraffic && !hasRecurring;
+}
 
-  final text = '${plan.name} ${plan.content}'.toLowerCase();
-  final keyword = RegExp(
-    r'按量|流量包|一次性|不续费|临时|体验|pay.*go|traffic.*pack|one.*time',
-    caseSensitive: false,
-  );
-  return hasTraffic && keyword.hasMatch(text);
+bool isTrafficPeriod(PlanPeriodOption option) {
+  return option.period == 'onetime_price' || option.period == 'reset_price';
+}
+
+String planSummaryText(StorePlan plan, {required bool trafficMode}) {
+  final parts = <String>[
+    trafficMode ? '一次性流量 ${plan.trafficLabel}' : '每月流量 ${plan.trafficLabel}',
+    '设备 ${planDeviceLimitText(plan)}',
+    '速率 ${planSpeedLimitText(plan)}',
+  ];
+  if (!trafficMode) {
+    parts.add('重置 ${planResetText(plan)}');
+  }
+  return parts.join(' · ');
+}
+
+String planDeviceLimitText(StorePlan plan) {
+  return plan.deviceLimit == null || plan.deviceLimit == 0
+      ? '无限制'
+      : '${plan.deviceLimit} 台';
+}
+
+String planSpeedLimitText(StorePlan plan) {
+  return plan.speedLimit == null || plan.speedLimit == 0
+      ? '无限制'
+      : '${plan.speedLimit!.toStringAsFixed(0)} Mbps';
+}
+
+String planResetText(StorePlan plan) {
+  return switch (plan.resetTrafficMethod) {
+    0 => '每月1号',
+    1 => '按月',
+    2 => '不重置',
+    3 => '每年1月1号',
+    4 => '按年',
+    _ => '跟随配置',
+  };
 }
 
 StorePlan? selectedRecurringPlan(List<StorePlan> plans, int? selectedPlanId) {
