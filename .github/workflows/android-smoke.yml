@@ -1,0 +1,67 @@
+name: Android Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Fetch Android core
+        run: |
+          mkdir -p app/android/app/libs /tmp/keli-hiddify-core
+          curl -L "https://github.com/hiddify/hiddify-core/releases/download/v4.1.0/hiddify-lib-android.tar.gz" -o /tmp/keli-hiddify-core/hiddify-lib-android.tar.gz
+          tar -xzf /tmp/keli-hiddify-core/hiddify-lib-android.tar.gz -C /tmp/keli-hiddify-core
+          cp /tmp/keli-hiddify-core/hiddify-core.aar app/android/app/libs/hiddify-core.aar
+
+      - name: Analyze and test
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze lib test
+          flutter test --reporter expanded
+
+      - name: Build debug APK
+        working-directory: app
+        run: flutter build apk --debug
+
+      - name: Verify embedded native core
+        run: |
+          unzip -l app/build/app/outputs/flutter-apk/app-debug.apk | grep "libhiddify-core.so"
+
+      - name: Emulator launch smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          script: |
+            adb install -r app/build/app/outputs/flutter-apk/app-debug.apk
+            adb shell monkey -p com.keli.keli_client 1
+            sleep 10
+            adb shell pidof -s com.keli.keli_client
+            adb shell dumpsys package com.keli.keli_client | grep KeliVpnService
