@@ -22,7 +22,7 @@ class _KeliClientAppState extends State<KeliClientApp> {
     super.initState();
     controller = AppController(
       api: RealKeliApi(),
-      coreManager: WindowsCoreManager(),
+      coreManager: createCoreManager(),
       sessionStore: SessionStore(),
     )..initialize();
   }

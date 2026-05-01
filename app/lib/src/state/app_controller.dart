@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -60,7 +61,7 @@ class AppController extends ChangeNotifier {
   int selectedNodeId = 0;
   int selectedPage = 0;
   NodeFilter nodeFilter = NodeFilter.all;
-  ProxyMode proxyMode = ProxyMode.system;
+  ProxyMode proxyMode = Platform.isAndroid ? ProxyMode.vpn : ProxyMode.system;
   ConnectionStateKind connectionState = ConnectionStateKind.disconnected;
   RuntimeStats stats = const RuntimeStats(
     uploadSpeed: '0 KB/s',
@@ -250,7 +251,7 @@ class AppController extends ChangeNotifier {
   }
 
   void selectMode(ProxyMode mode) {
-    proxyMode = mode;
+    proxyMode = Platform.isAndroid ? ProxyMode.vpn : mode;
     _log('INFO', '代理模式切换为 ${mode.label}');
     notifyListeners();
   }
@@ -674,17 +675,18 @@ class AppController extends ChangeNotifier {
     try {
       final config = await api.fetchSingBoxConfig(
         serverId: node.id,
-        platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+        platform: _appConfigPlatform,
         coreVersion: '1.13.11',
       );
       await coreManager.prepare();
-      final applied = await coreManager.applyConfig(config, mode: proxyMode);
+      final applied =
+          await coreManager.applyConfig(config, mode: _effectiveProxyMode);
       _log('INFO', '配置已写入 ${applied.configFile.path}');
       _log('INFO', '本地代理 ${applied.localProxyType}:${applied.localProxyPort}');
       if (applied.clashApiAddress != null) {
         _log('INFO', '本地核心 API ${applied.clashApiAddress}');
       }
-      await coreManager.connect(node: node, mode: proxyMode);
+      await coreManager.connect(node: node, mode: _effectiveProxyMode);
       connectionState = ConnectionStateKind.connected;
       _startRuntimeTimer();
       _log('INFO', '连接成功: ${node.name}');
@@ -739,7 +741,7 @@ class AppController extends ChangeNotifier {
       if (snapshot.isNotEmpty) {
         try {
           batchConfig = await api.fetchSingBoxBatchConfig(
-            platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+            platform: _appConfigPlatform,
             coreVersion: '1.13.11',
           );
           _log('INFO', '已加载全量测速配置，将复用单个核心批量测速');
@@ -763,7 +765,7 @@ class AppController extends ChangeNotifier {
             final latencies = await coreManager.testLatencies(
               batchNodes,
               config: currentBatchConfig,
-              mode: proxyMode,
+              mode: _effectiveProxyMode,
               testMode: mode,
               concurrency: concurrency,
             );
@@ -939,15 +941,29 @@ class AppController extends ChangeNotifier {
   }) async {
     final config = await api.fetchSingBoxConfig(
       serverId: node.id,
-      platform: proxyMode == ProxyMode.vpn ? 'android' : 'windows',
+      platform: _appConfigPlatform,
       coreVersion: '1.13.11',
     );
     return coreManager.testLatency(
       node,
       config: config,
-      mode: proxyMode,
+      mode: _effectiveProxyMode,
       testMode: testMode,
     );
+  }
+
+  String get _appConfigPlatform {
+    if (Platform.isAndroid) {
+      return 'android';
+    }
+    if (Platform.isMacOS) {
+      return 'macos';
+    }
+    return 'windows';
+  }
+
+  ProxyMode get _effectiveProxyMode {
+    return Platform.isAndroid ? ProxyMode.vpn : proxyMode;
   }
 
   Future<void> refreshDiagnostics({bool logResult = true}) async {

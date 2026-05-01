@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 import '../models.dart';
 import 'session_store.dart';
 
@@ -57,6 +59,268 @@ class CoreApplyResult {
   final int localProxyPort;
   final String localProxyType;
   final String? clashApiAddress;
+}
+
+CoreManager createCoreManager() {
+  if (Platform.isAndroid) {
+    return AndroidCoreManager();
+  }
+  if (Platform.isWindows) {
+    return WindowsCoreManager();
+  }
+  return UnsupportedCoreManager();
+}
+
+class AndroidCoreManager implements CoreManager {
+  AndroidCoreManager({Directory? runtimeRoot})
+      : runtimeRoot = runtimeRoot ??
+            Directory(
+                '${SessionStore.defaultAppDataDirectory().path}${Platform.pathSeparator}runtime');
+
+  static const MethodChannel _channel =
+      MethodChannel('com.keli.keli_client/core');
+
+  final Directory runtimeRoot;
+  bool _prepared = false;
+  bool _configApplied = false;
+  bool _running = false;
+  String _status = 'idle';
+  String? _lastMessage;
+
+  Directory get _configDir =>
+      Directory('${runtimeRoot.path}${Platform.pathSeparator}config');
+  File get _configFile =>
+      File('${_configDir.path}${Platform.pathSeparator}sing-box-android.json');
+
+  @override
+  Future<void> prepare() async {
+    await runtimeRoot.create(recursive: true);
+    await _configDir.create(recursive: true);
+    final result = await _invokeMap('prepare');
+    _prepared = result['prepared'] == true;
+    _status = _prepared ? 'prepared' : 'permission-required';
+    _lastMessage = result['message'] as String?;
+    if (!_prepared && result['permissionRequired'] == true) {
+      throw const CoreException('需要先授予 Android VPN 权限，请确认系统弹窗后再连接');
+    }
+  }
+
+  @override
+  Future<CoreApplyResult> applyConfig(
+    Map<String, Object?> config, {
+    ProxyMode mode = ProxyMode.system,
+  }) async {
+    await _configDir.create(recursive: true);
+    const encoder = JsonEncoder.withIndent('  ');
+    final configText = encoder.convert(config);
+    await _configFile.writeAsString(configText);
+    final result = await _invokeMap(
+      'applyConfig',
+      <String, Object?>{
+        'config': configText,
+        'mode': mode.name,
+      },
+    );
+    _configApplied = result['applied'] != false;
+    _status = _configApplied ? 'configured' : 'config-error';
+    _lastMessage = result['message'] as String?;
+    return CoreApplyResult(
+      configFile: _configFile,
+      localProxyPort: 0,
+      localProxyType: 'vpn',
+    );
+  }
+
+  @override
+  Future<void> connect({
+    required ProxyNode node,
+    required ProxyMode mode,
+  }) async {
+    if (!_configApplied) {
+      throw const CoreException('Android sing-box 配置尚未写入');
+    }
+    final configText = await _configFile.readAsString();
+    final result = await _invokeMap(
+      'connect',
+      <String, Object?>{
+        'config': configText,
+        'node_id': node.id,
+        'node_name': node.name,
+        'mode': mode.name,
+      },
+    );
+    _prepared = result['prepared'] == true || _prepared;
+    _running = result['connected'] == true;
+    _status = _running ? 'running' : 'not-running';
+    _lastMessage = result['message'] as String?;
+    if (result['permissionRequired'] == true) {
+      throw const CoreException('需要先授予 Android VPN 权限，请确认系统弹窗后再连接');
+    }
+    if (!_running) {
+      throw CoreException(
+        _lastMessage ?? 'Android VPNService 已接入，sing-box 移动端内核尚未绑定',
+      );
+    }
+  }
+
+  @override
+  Future<void> disconnect() async {
+    final result = await _invokeMap('disconnect');
+    _running = false;
+    _status = 'stopped';
+    _lastMessage = result['message'] as String?;
+  }
+
+  @override
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
+    return null;
+  }
+
+  @override
+  Future<Map<int, int?>> testLatencies(
+    List<ProxyNode> nodes, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+    int concurrency = 5,
+  }) async {
+    return <int, int?>{
+      for (final node in nodes) node.id: null,
+    };
+  }
+
+  @override
+  Stream<CoreTrafficSample> watchTraffic() {
+    return const Stream<CoreTrafficSample>.empty();
+  }
+
+  @override
+  Future<CoreDiagnostics> diagnostics() async {
+    Map<String, Object?> status = const <String, Object?>{};
+    try {
+      status = await _invokeMap('status');
+    } catch (_) {}
+    final configExists = await _configFile.exists();
+    final nativeStatus = status['status'] as String?;
+    return CoreDiagnostics(
+      updatedAt: DateTime.now(),
+      runtimeRoot: runtimeRoot.path,
+      corePath: 'Android VPNService',
+      coreExists: true,
+      configPath: _configFile.path,
+      configExists: configExists,
+      logPath: '',
+      logExists: false,
+      processRunning: status['running'] == true || _running,
+      localProxyType: 'vpn',
+      localProxyListen: 'android-vpn',
+      localProxyPort: 0,
+      clashApiAddress: null,
+      systemProxyEnabled: false,
+      systemProxyServer: null,
+      configCheckStatus: nativeStatus ?? _status,
+      configCheckOutput: (status['message'] as String?) ??
+          _lastMessage ??
+          'Android VPN 通道已初始化',
+      logTail: const [],
+    );
+  }
+
+  Future<Map<String, Object?>> _invokeMap(
+    String method, [
+    Map<String, Object?> arguments = const <String, Object?>{},
+  ]) async {
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        method,
+        arguments,
+      );
+      return result ?? const <String, Object?>{};
+    } on PlatformException catch (error) {
+      throw CoreException(error.message ?? error.code);
+    }
+  }
+}
+
+class UnsupportedCoreManager implements CoreManager {
+  @override
+  Future<void> prepare() async {}
+
+  @override
+  Future<CoreApplyResult> applyConfig(
+    Map<String, Object?> config, {
+    ProxyMode mode = ProxyMode.system,
+  }) async {
+    throw CoreException('${Platform.operatingSystem} 暂未接入本地核心');
+  }
+
+  @override
+  Future<void> connect({
+    required ProxyNode node,
+    required ProxyMode mode,
+  }) async {
+    throw CoreException('${Platform.operatingSystem} 暂未接入本地核心');
+  }
+
+  @override
+  Future<void> disconnect() async {}
+
+  @override
+  Future<int?> testLatency(
+    ProxyNode node, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+  }) async {
+    return null;
+  }
+
+  @override
+  Future<Map<int, int?>> testLatencies(
+    List<ProxyNode> nodes, {
+    Map<String, Object?>? config,
+    ProxyMode mode = ProxyMode.system,
+    LatencyTestMode testMode = LatencyTestMode.quick,
+    int concurrency = 5,
+  }) async {
+    return <int, int?>{
+      for (final node in nodes) node.id: null,
+    };
+  }
+
+  @override
+  Stream<CoreTrafficSample> watchTraffic() {
+    return const Stream<CoreTrafficSample>.empty();
+  }
+
+  @override
+  Future<CoreDiagnostics> diagnostics() async {
+    return CoreDiagnostics(
+      updatedAt: DateTime.now(),
+      runtimeRoot: '',
+      corePath: '',
+      coreExists: false,
+      configPath: '',
+      configExists: false,
+      logPath: '',
+      logExists: false,
+      processRunning: false,
+      localProxyType: 'unsupported',
+      localProxyListen: Platform.operatingSystem,
+      localProxyPort: 0,
+      clashApiAddress: null,
+      systemProxyEnabled: false,
+      systemProxyServer: null,
+      configCheckStatus: 'unsupported',
+      configCheckOutput: '${Platform.operatingSystem} 暂未接入本地核心',
+      logTail: const [],
+    );
+  }
 }
 
 class WindowsCoreManager implements CoreManager {
