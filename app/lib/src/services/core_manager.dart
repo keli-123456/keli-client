@@ -139,11 +139,10 @@ class AndroidCoreManager implements CoreManager {
     if (!_configApplied) {
       throw const CoreException('Android sing-box 配置尚未写入');
     }
-    final configText = await _configFile.readAsString();
     final result = await _invokeMap(
       'connect',
       <String, Object?>{
-        'config': configText,
+        'config_path': _configFile.path,
         'node_id': node.id,
         'node_name': node.name,
         'mode': mode.name,
@@ -207,11 +206,12 @@ class AndroidCoreManager implements CoreManager {
     } catch (_) {}
     final configExists = await _configFile.exists();
     final nativeStatus = status['status'] as String?;
+    final coreEmbedded = status['coreEmbedded'] == true;
     return CoreDiagnostics(
       updatedAt: DateTime.now(),
       runtimeRoot: runtimeRoot.path,
       corePath: 'Android VPNService',
-      coreExists: true,
+      coreExists: coreEmbedded,
       configPath: _configFile.path,
       configExists: configExists,
       logPath: '',
@@ -226,7 +226,7 @@ class AndroidCoreManager implements CoreManager {
       configCheckStatus: nativeStatus ?? _status,
       configCheckOutput: (status['message'] as String?) ??
           _lastMessage ??
-          'Android VPN 通道已初始化',
+          (coreEmbedded ? 'Android VPN 通道已初始化' : 'Android 核心 AAR 未打包'),
       logTail: const [],
     );
   }

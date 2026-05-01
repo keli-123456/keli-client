@@ -1,4 +1,5 @@
 .dart_tool/
+.codex-temp/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
@@ -21,3 +22,4 @@ logs/
 config.local.json
 
 app/windows/flutter/ephemeral/
+app/android/app/libs/*.aar

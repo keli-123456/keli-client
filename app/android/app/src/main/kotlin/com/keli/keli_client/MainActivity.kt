@@ -2,6 +2,7 @@ package com.keli.keli_client
 
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -46,13 +47,22 @@ class MainActivity : FlutterActivity() {
 
     private fun handleApplyConfig(call: MethodCall, result: MethodChannel.Result) {
         val config = call.argument<String>("config").orEmpty()
-        filesDir.resolve("keli-sing-box.json").writeText(config)
+        val configFile = filesDir.resolve("keli-sing-box.json")
+        configFile.writeText(config)
         getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
             .edit()
+            .putString(KeliVpnService.KEY_CONFIG_PATH, configFile.path)
             .putString(KeliVpnService.KEY_STATUS, "configured")
             .putString(KeliVpnService.KEY_MESSAGE, "Config accepted by Android bridge")
             .apply()
-        result.success(mapOf("applied" to true, "message" to "Config accepted"))
+        result.success(
+            mapOf(
+                "applied" to true,
+                "configPath" to configFile.path,
+                "coreEmbedded" to KeliSingBoxRunnerFactory.hasEmbeddedCore(),
+                "message" to "Config accepted"
+            )
+        )
     }
 
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
@@ -70,25 +80,47 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        if (!KeliSingBoxRunnerFactory.hasEmbeddedCore()) {
+            result.success(
+                mapOf(
+                    "connected" to false,
+                    "prepared" to true,
+                    "coreEmbedded" to false,
+                    "message" to "Android sing-box core is missing. Put hiddify-core.aar in android/app/libs and rebuild."
+                )
+            )
+            return
+        }
+
         val config = call.argument<String>("config").orEmpty()
+        val configPath = call.argument<String>("config_path")
         val nodeName = call.argument<String>("node_name").orEmpty()
         val serviceIntent = Intent(this, KeliVpnService::class.java).apply {
             action = KeliVpnService.ACTION_START
             putExtra(KeliVpnService.EXTRA_CONFIG, config)
+            putExtra(KeliVpnService.EXTRA_CONFIG_PATH, configPath)
             putExtra(KeliVpnService.EXTRA_NODE_NAME, nodeName)
         }
-        startService(serviceIntent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
         result.success(
             mapOf(
-                "connected" to false,
+                "connected" to true,
                 "prepared" to true,
-                "message" to "Android VPNService bridge is ready; sing-box Android runner is not bound yet"
+                "coreEmbedded" to true,
+                "message" to "Android sing-box VPN started"
             )
         )
     }
 
     private fun handleDisconnect(result: MethodChannel.Result) {
-        stopService(Intent(this, KeliVpnService::class.java))
+        val intent = Intent(this, KeliVpnService::class.java).apply {
+            action = KeliVpnService.ACTION_STOP
+        }
+        startService(intent)
         getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
             .edit()
             .putString(KeliVpnService.KEY_STATUS, "stopped")
@@ -101,6 +133,7 @@ class MainActivity : FlutterActivity() {
         val prefs = getSharedPreferences(KeliVpnService.PREFS, MODE_PRIVATE)
         result.success(
             mapOf(
+                "coreEmbedded" to KeliSingBoxRunnerFactory.hasEmbeddedCore(),
                 "running" to prefs.getBoolean(KeliVpnService.KEY_RUNNING, false),
                 "status" to prefs.getString(KeliVpnService.KEY_STATUS, "idle"),
                 "message" to prefs.getString(KeliVpnService.KEY_MESSAGE, "Android bridge idle")

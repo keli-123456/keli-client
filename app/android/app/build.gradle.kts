@@ -5,6 +5,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val hiddifyCoreAar = file("libs/hiddify-core.aar")
+
 android {
     namespace = "com.keli.keli_client"
     compileSdk = flutter.compileSdkVersion
@@ -37,8 +39,28 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    sourceSets {
+        getByName("main") {
+            if (hiddifyCoreAar.exists()) {
+                java.srcDir("src/hiddifyCore/kotlin")
+            }
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    if (hiddifyCoreAar.exists()) {
+        implementation(files(hiddifyCoreAar))
+    }
 }
