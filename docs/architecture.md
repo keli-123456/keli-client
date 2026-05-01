@@ -60,6 +60,17 @@ Expected methods:
 - `resetSubscribeToken()`
 - `fetchManifest()` after the backend adds it
 
+### Endpoint Resolver
+
+Runs before login and produces an ordered API candidate list. It combines the
+last successful endpoint cache, user-entered panel URL, panel
+`/.well-known/keli-client.json`, DNS TXT discovery, and built-in bootstrap
+mirrors. The API SDK only receives the candidate selected for the current login
+attempt.
+
+The resolver must not become a single point of failure. If discovery fails, the
+manual panel URL still remains a login candidate.
+
 ### Core Manager
 
 Owns the local sing-box lifecycle:

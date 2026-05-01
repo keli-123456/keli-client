@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../services/core_manager.dart';
+import '../services/endpoint_resolver.dart';
 import '../services/keli_api.dart';
 import '../services/session_store.dart';
 
@@ -34,11 +35,13 @@ class AppController extends ChangeNotifier {
     required this.api,
     required this.coreManager,
     required this.sessionStore,
-  });
+    EndpointResolver? endpointResolver,
+  }) : endpointResolver = endpointResolver ?? ApiEndpointResolver();
 
   final KeliApi api;
   final CoreManager coreManager;
   final SessionStore sessionStore;
+  final EndpointResolver endpointResolver;
 
   bool isBootstrapping = true;
   bool isAuthenticated = false;
@@ -204,16 +207,42 @@ class AppController extends ChangeNotifier {
     lastError = null;
     notifyListeners();
     try {
-      final result = await api.login(
-        baseUrl: baseUrl,
+      final cachedEndpoint = await sessionStore.loadEndpointConfig();
+      final candidates = await endpointResolver.resolveLoginCandidates(
+        panelUrl: baseUrl,
         apiPrefix: apiPrefix,
-        email: email,
-        password: password,
+        cached: cachedEndpoint,
       );
+      LoginResult? result;
+      ApiEndpointCandidate? successfulEndpoint;
+      Object? lastLoginError;
+      for (final candidate in candidates) {
+        try {
+          result = await api.login(
+            baseUrl: candidate.baseUrl,
+            apiPrefix: candidate.apiPrefix,
+            email: email,
+            password: password,
+          );
+          successfulEndpoint = candidate;
+          break;
+        } catch (error) {
+          lastLoginError = error;
+          _log('WARN', 'API ${candidate.source} 登录尝试失败: $error');
+        }
+      }
+      if (result == null || successfulEndpoint == null) {
+        throw lastLoginError ?? const ApiException('没有可用的 API 入口');
+      }
       session = result.session;
       await sessionStore.save(result.session);
+      await sessionStore.saveEndpointConfig(
+        successfulEndpoint.toCacheConfig(
+          panelHost: Uri.parse(normalizeBaseUrl(baseUrl)).host,
+        ),
+      );
       isAuthenticated = true;
-      _log('INFO', '登录成功');
+      _log('INFO', '登录成功，API 来源 ${successfulEndpoint.source}');
       await bootstrap();
     } catch (error) {
       lastError = '$error';

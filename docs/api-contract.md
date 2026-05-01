@@ -5,6 +5,37 @@ Existing endpoints should be reused first.
 
 ## Authentication
 
+## Endpoint Discovery
+
+Before login, the client may discover a usable API endpoint from the panel
+domain. The preferred panel-hosted document is:
+
+```http
+GET /.well-known/keli-client.json
+```
+
+Response:
+
+```json
+{
+  "api_base": "https://sp.huhu.icu",
+  "api_prefix": "/api/v1",
+  "backup_api_bases": ["https://api1.huhu.icu"],
+  "bootstrap_urls": ["https://static.huhu.icu/keli-client.json"],
+  "ttl": 3600,
+  "signature": "future-ed25519-signature"
+}
+```
+
+DNS TXT may also point the client to that document:
+
+```text
+_keli-client.example.com TXT "v=keli1; u=https://example.com/.well-known/keli-client.json"
+```
+
+See `docs/api-discovery.md` for the client-side candidate order and safety
+rules.
+
 ### Login
 
 ```http
@@ -165,4 +196,3 @@ GET /api/v1/app/config?core=sing-box&platform=windows&server_id=0
 
 When `server_id=0`, the panel can return a selector/urltest config containing
 all available nodes. This is optional for MVP.
-

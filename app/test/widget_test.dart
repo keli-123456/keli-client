@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:keli_client/src/models.dart';
 import 'package:keli_client/src/services/core_manager.dart';
+import 'package:keli_client/src/services/endpoint_resolver.dart';
 import 'package:keli_client/src/services/keli_api.dart';
 import 'package:keli_client/src/services/session_store.dart';
 import 'package:keli_client/src/state/app_controller.dart';
@@ -92,6 +93,168 @@ void main() {
       '移动端核心缺失',
     );
   });
+
+  test('endpoint resolver combines cache, well-known, txt and bootstrap',
+      () async {
+    final resolver = ApiEndpointResolver(
+      bootstrapUrls: const ['https://panel.example/bootstrap/keli-client.json'],
+      client: FakeDiscoveryClient(
+        jsonByUrl: <String, Map<String, Object?>>{
+          'https://panel.example/.well-known/keli-client.json':
+              <String, Object?>{
+            'api_base': 'https://well-known-api.example',
+            'api_prefix': '/api/v2',
+            'backup_api_bases': ['https://well-known-backup.example'],
+            'ttl': 3600,
+          },
+          'https://dns.example/keli-client.json': <String, Object?>{
+            'api_base': 'https://dns-api.example',
+            'api_prefix': '/api/v1',
+          },
+          'https://panel.example/bootstrap/keli-client.json': <String, Object?>{
+            'api_base': 'https://bootstrap-api.example',
+            'api_prefix': '/api/v1',
+          },
+        },
+        txtByName: const <String, List<String>>{
+          '_keli-client.panel.example': [
+            'v=keli1; u=https://dns.example/keli-client.json',
+          ],
+        },
+      ),
+    );
+
+    final candidates = await resolver.resolveLoginCandidates(
+      panelUrl: 'panel.example',
+      apiPrefix: '/api/v1',
+      cached: ApiEndpointConfig(
+        apiBase: 'https://cached.example',
+        apiPrefix: '/api/v1',
+        backupApiBases: const ['https://cached-backup.example'],
+        panelHost: 'panel.example',
+        source: 'cache',
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    expect(
+      candidates.map((candidate) => candidate.baseUrl),
+      containsAllInOrder([
+        'https://cached.example',
+        'https://cached-backup.example',
+        'https://panel.example',
+        'https://well-known-api.example',
+        'https://well-known-backup.example',
+        'https://dns-api.example',
+        'https://bootstrap-api.example',
+      ]),
+    );
+  });
+
+  test('login falls back across resolved API candidates and caches winner',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final store = SessionStore(root: temp);
+    final api = RecordingLoginApi(successBaseUrl: 'https://alive.example');
+    final controller = AppController(
+      api: api,
+      coreManager: MockCoreManager(),
+      sessionStore: store,
+      endpointResolver: StaticEndpointResolver(
+        const [
+          ApiEndpointCandidate(
+            baseUrl: 'https://dead.example',
+            apiPrefix: '/api/v1',
+            source: 'cache',
+          ),
+          ApiEndpointCandidate(
+            baseUrl: 'https://alive.example',
+            apiPrefix: '/api/v1',
+            source: 'well-known',
+          ),
+        ],
+      ),
+    );
+
+    try {
+      await controller.login(
+        baseUrl: 'https://panel.example',
+        apiPrefix: '/api/v1',
+        email: 'test@example.com',
+        password: 'password',
+      );
+
+      expect(
+          api.loginBaseUrls, ['https://dead.example', 'https://alive.example']);
+      expect(controller.isAuthenticated, isTrue);
+      final cached = await store.loadEndpointConfig();
+      expect(cached?.apiBase, 'https://alive.example');
+      expect(cached?.panelHost, 'panel.example');
+      expect(cached?.source, 'well-known');
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('built-in bootstrap is skipped for a different user panel', () async {
+    final resolver = ApiEndpointResolver(
+      bootstrapUrls: const ['https://sp.huhu.icu/.well-known/keli-client.json'],
+      client: const FakeDiscoveryClient(
+        jsonByUrl: <String, Map<String, Object?>>{
+          'https://sp.huhu.icu/.well-known/keli-client.json': <String, Object?>{
+            'api_base': 'https://sp.huhu.icu',
+            'api_prefix': '/api/v1',
+          },
+        },
+      ),
+    );
+
+    final candidates = await resolver.resolveLoginCandidates(
+      panelUrl: 'https://custom.example',
+      apiPrefix: '/api/v1',
+    );
+
+    expect(
+      candidates.map((candidate) => candidate.baseUrl),
+      isNot(contains('https://sp.huhu.icu')),
+    );
+  });
+}
+
+class FakeDiscoveryClient implements EndpointDiscoveryClient {
+  const FakeDiscoveryClient({
+    this.jsonByUrl = const <String, Map<String, Object?>>{},
+    this.txtByName = const <String, List<String>>{},
+  });
+
+  final Map<String, Map<String, Object?>> jsonByUrl;
+  final Map<String, List<String>> txtByName;
+
+  @override
+  Future<Map<String, Object?>?> fetchJson(Uri uri) async {
+    return jsonByUrl['$uri'];
+  }
+
+  @override
+  Future<List<String>> lookupTxt(String name) async {
+    return txtByName[name] ?? const <String>[];
+  }
+}
+
+class StaticEndpointResolver implements EndpointResolver {
+  const StaticEndpointResolver(this.candidates);
+
+  final List<ApiEndpointCandidate> candidates;
+
+  @override
+  Future<List<ApiEndpointCandidate>> resolveLoginCandidates({
+    required String panelUrl,
+    required String apiPrefix,
+    ApiEndpointConfig? cached,
+  }) async {
+    return candidates;
+  }
 }
 
 class MockKeliApi implements KeliApi {
@@ -197,6 +360,33 @@ class MockKeliApi implements KeliApi {
     required String period,
   }) async {
     return const UpgradePreview(allowUpgrade: false);
+  }
+}
+
+class RecordingLoginApi extends MockKeliApi {
+  RecordingLoginApi({required this.successBaseUrl});
+
+  final String successBaseUrl;
+  final List<String> loginBaseUrls = <String>[];
+
+  @override
+  Future<LoginResult> login({
+    required String baseUrl,
+    required String apiPrefix,
+    required String email,
+    required String password,
+  }) async {
+    loginBaseUrls.add(baseUrl);
+    if (baseUrl != successBaseUrl) {
+      throw const ApiException('network unavailable');
+    }
+    return LoginResult(
+      session: ApiSession(
+        baseUrl: baseUrl,
+        apiPrefix: apiPrefix,
+        authData: 'Bearer test',
+      ),
+    );
   }
 }
 

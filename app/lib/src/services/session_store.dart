@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models.dart';
+import 'endpoint_resolver.dart';
 
 class SessionStore {
   SessionStore({Directory? root}) : root = root ?? defaultAppDataDirectory();
@@ -10,6 +11,8 @@ class SessionStore {
 
   File get _sessionFile =>
       File('${root.path}${Platform.pathSeparator}session.json');
+  File get _endpointFile =>
+      File('${root.path}${Platform.pathSeparator}endpoint.json');
 
   Future<ApiSession?> load() async {
     try {
@@ -33,6 +36,24 @@ class SessionStore {
     if (await _sessionFile.exists()) {
       await _sessionFile.delete();
     }
+  }
+
+  Future<ApiEndpointConfig?> loadEndpointConfig() async {
+    try {
+      if (!await _endpointFile.exists()) {
+        return null;
+      }
+      final raw = await _endpointFile.readAsString();
+      return ApiEndpointConfig.fromJson(jsonDecode(raw), source: 'cache');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveEndpointConfig(ApiEndpointConfig config) async {
+    await root.create(recursive: true);
+    const encoder = JsonEncoder.withIndent('  ');
+    await _endpointFile.writeAsString(encoder.convert(config.toJson()));
   }
 
   static Directory defaultAppDataDirectory() {
