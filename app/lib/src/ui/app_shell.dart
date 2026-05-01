@@ -543,7 +543,7 @@ class HomeScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _DesktopAccountBar(profile: profile),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -555,18 +555,18 @@ class HomeScreen extends StatelessWidget {
                     Expanded(
                       child: _ConnectPanel(node: node, fillHeight: true),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     _RuntimeStrip(isDesktop: true),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 flex: 5,
                 child: Column(
                   children: [
                     _CurrentNodePanel(node: node),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     const Expanded(
                       child: _ModeAndRoutePanel(fillHeight: true),
                     ),
@@ -605,11 +605,11 @@ class _DesktopAccountBar extends StatelessWidget {
             Expanded(
               flex: 11,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
                 child: Row(
                   children: [
                     CircleAvatar(
-                      radius: 25,
+                      radius: 24,
                       backgroundColor: keliBlueSoft,
                       child: Text(profileInitials(profile),
                           style: const TextStyle(
@@ -652,7 +652,7 @@ class _DesktopAccountBar extends StatelessWidget {
             Expanded(
               flex: 7,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
+                padding: const EdgeInsets.fromLTRB(22, 12, 22, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -666,7 +666,7 @@ class _DesktopAccountBar extends StatelessWidget {
                           TextSpan(
                               text: remaining,
                               style: const TextStyle(
-                                  fontSize: 24, fontWeight: FontWeight.w900)),
+                                  fontSize: 23, fontWeight: FontWeight.w900)),
                           TextSpan(
                               text: ' GB / $total',
                               style: const TextStyle(
@@ -692,7 +692,7 @@ class _DesktopAccountBar extends StatelessWidget {
             Expanded(
               flex: 5,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 14, 22, 14),
+                padding: const EdgeInsets.fromLTRB(22, 12, 22, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -778,163 +778,264 @@ class _ConnectPanel extends StatelessWidget {
     final dialOuter = compact ? (tightPhone ? 154.0 : 168.0) : 184.0;
     final dialMiddle = compact ? dialOuter - 18 : 166.0;
     final dialInner = compact ? dialOuter - 56 : 128.0;
+    final header = Row(
+      children: [
+        const Expanded(
+          child: Text('连接状态',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        ),
+        _MiniBadge(
+          text: node?.protocol ?? '未选择',
+          color: connected ? keliGreen : keliMuted,
+        ),
+      ],
+    );
+    final dialControl = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: busy
+              ? null
+              : connected
+                  ? controller.disconnect
+                  : controller.connect,
+          child: SizedBox(
+            width: dialOuter,
+            height: dialOuter,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: dialOuter,
+                  height: dialOuter,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: SweepGradient(
+                      colors: connected
+                          ? const [
+                              Color(0xFF18C6B5),
+                              Color(0xFF32D583),
+                              Color(0xFF18C6B5)
+                            ]
+                          : [
+                              statusColor,
+                              statusColor.withValues(alpha: 0.42),
+                              statusColor
+                            ],
+                    ),
+                  ),
+                ),
+                Container(
+                  width: dialMiddle,
+                  height: dialMiddle,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF8FAFD),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                Container(
+                  width: dialInner,
+                  height: dialInner,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.06),
+                        blurRadius: 22,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color:
+                              connected ? const Color(0xFF18C6B5) : statusColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          connected
+                              ? Icons.shield_outlined
+                              : Icons.power_settings_new,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        statusText,
+                        style: TextStyle(
+                          fontSize: compact ? 18 : 21,
+                          color: statusColor,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(durationText,
+                          style: const TextStyle(
+                              color: keliMuted,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: compact ? double.infinity : 178,
+          child: FilledButton.icon(
+            onPressed: busy
+                ? null
+                : connected
+                    ? controller.disconnect
+                    : controller.connect,
+            icon: Icon(connected ? Icons.link_off : Icons.play_arrow_rounded,
+                size: 18),
+            label: Text(connected ? '断开连接' : '立即连接'),
+          ),
+        ),
+      ],
+    );
 
     return KeliCard(
-      padding: EdgeInsets.all(compact ? 16 : 20),
+      padding: EdgeInsets.all(compact ? 16 : 18),
       child: SizedBox(
         height: compact || fillHeight ? null : 356,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            header,
+            SizedBox(height: compact ? 12 : 10),
             if (compact)
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('连接状态',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w900)),
-                  ),
-                  _MiniBadge(
-                    text: node?.protocol ?? '未选择',
-                    color: connected ? keliGreen : keliMuted,
-                  ),
-                ],
-              )
+              dialControl
             else
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('连接状态',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w900)),
-                  ),
-                  _MiniBadge(
-                    text: node?.protocol ?? '未选择',
-                    color: connected ? keliGreen : keliMuted,
-                  ),
-                ],
-              ),
-            if (compact) const SizedBox(height: 12),
-            if (!compact) const Spacer(),
-            InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: busy
-                  ? null
-                  : connected
-                      ? controller.disconnect
-                      : controller.connect,
-              child: SizedBox(
-                width: dialOuter,
-                height: dialOuter,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Container(
-                      width: dialOuter,
-                      height: dialOuter,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: SweepGradient(
-                          colors: connected
-                              ? const [
-                                  Color(0xFF18C6B5),
-                                  Color(0xFF32D583),
-                                  Color(0xFF18C6B5)
-                                ]
-                              : [
-                                  statusColor,
-                                  statusColor.withValues(alpha: 0.42),
-                                  statusColor
-                                ],
-                        ),
-                      ),
-                    ),
-                    Container(
-                      width: dialMiddle,
-                      height: dialMiddle,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF8FAFD),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    Container(
-                      width: dialInner,
-                      height: dialInner,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 22,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: connected
-                                  ? const Color(0xFF18C6B5)
-                                  : statusColor,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              connected
-                                  ? Icons.shield_outlined
-                                  : Icons.power_settings_new,
-                              color: Colors.white,
-                              size: 24,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            statusText,
-                            style: TextStyle(
-                              fontSize: compact ? 18 : 21,
-                              color: statusColor,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(durationText,
-                              style: const TextStyle(
-                                  color: keliMuted,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: compact ? double.infinity : 178,
-              child: FilledButton.icon(
-                onPressed: busy
-                    ? null
-                    : connected
-                        ? controller.disconnect
-                        : controller.connect,
-                icon: Icon(
-                    connected ? Icons.link_off : Icons.play_arrow_rounded,
-                    size: 18),
-                label: Text(connected ? '断开连接' : '立即连接'),
-              ),
-            ),
+              Expanded(child: Center(child: dialControl)),
             if (compact && node != null) ...[
               const SizedBox(height: 14),
               _SelectedNodeCard(node: node!),
             ],
-            if (!compact) const Spacer(),
+            if (!compact) ...[
+              const SizedBox(height: 12),
+              _ConnectionStatusDock(node: node),
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusDock extends StatelessWidget {
+  const _ConnectionStatusDock({required this.node});
+
+  final ProxyNode? node;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = AppControllerScope.of(context);
+    final diagnostics = controller.diagnostics;
+    final listen = diagnostics?.localProxyListen.trim() ?? '';
+    final port = diagnostics?.localProxyPort ?? 0;
+    final localText = port > 0
+        ? ':$port'
+        : listen.isNotEmpty
+            ? listen
+            : '未启动';
+
+    return Material(
+      color: const Color(0xFFFAFBFD),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => showNodePickerDialog(context),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border.all(color: keliLineSoft),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              _NodeFlagIcon(node: node, selected: true, size: 34),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 4,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(node?.name ?? '未选择节点',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 3),
+                    Text(node?.protocol ?? '-',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: keliMuted, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _ConnectionDockMetric(
+                label: '延迟',
+                value: nodeLatencyText(controller, node),
+                color: nodeLatencyStatusColor(controller, node),
+              ),
+              const SizedBox(width: 10),
+              _ConnectionDockMetric(label: '本地', value: localText),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right_rounded,
+                  color: keliMuted, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionDockMetric extends StatelessWidget {
+  const _ConnectionDockMetric({
+    required this.label,
+    required this.value,
+    this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 62, maxWidth: 104),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: keliMuted, fontSize: 11)),
+          const SizedBox(height: 3),
+          Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  color: color ?? keliInk,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900)),
+        ],
       ),
     );
   }
@@ -1832,14 +1933,30 @@ class _ModeAndRoutePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppControllerScope.of(context);
+    final diagnostics = controller.diagnostics;
+    final coreText = diagnostics == null
+        ? '未刷新'
+        : diagnostics.processRunning
+            ? '运行中'
+            : '未运行';
+    final latencyText =
+        controller.coreManager.supportsLatencyTesting ? '支持测速' : '平台限制';
     return KeliCard(
       padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('代理模式',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 9),
+          Row(
+            children: [
+              const Expanded(
+                child: Text('代理模式',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              ),
+              _MiniBadge(text: controller.proxyMode.label, color: keliBlue),
+            ],
+          ),
+          const SizedBox(height: 10),
           ModeToggleLine(
             icon: Icons.monitor_outlined,
             title: '系统代理',
@@ -1854,81 +1971,127 @@ class _ModeAndRoutePanel extends StatelessWidget {
             onChanged: (_) => controller.selectMode(ProxyMode.tun),
           ),
           const SizedBox(height: 10),
-          _ModeSummaryStrip(mode: controller.proxyMode),
-          if (fillHeight) const Spacer() else const SizedBox(height: 9),
           const Divider(height: 1),
           const SizedBox(height: 7),
-          const Text('分流设置',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 4),
-          const DetailLine(label: '路由规则', value: '跟随配置'),
-          const DetailLine(label: '局域网规则', value: '跟随配置'),
-          const DetailLine(label: 'DNS', value: '跟随配置'),
+          const Row(
+            children: [
+              Expanded(
+                child: Text('分流设置',
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w900)),
+              ),
+              Text('跟随配置',
+                  style: TextStyle(
+                      color: keliMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const _RouteSummaryPanel(),
+          if (fillHeight) const Spacer() else const SizedBox(height: 10),
+          _CoreStatusStrip(coreText: coreText, latencyText: latencyText),
         ],
       ),
     );
   }
 }
 
-class _ModeSummaryStrip extends StatelessWidget {
-  const _ModeSummaryStrip({required this.mode});
-
-  final ProxyMode mode;
+class _RouteSummaryPanel extends StatelessWidget {
+  const _RouteSummaryPanel();
 
   @override
   Widget build(BuildContext context) {
-    final title = switch (mode) {
-      ProxyMode.tun => '当前使用 TUN 模式',
-      ProxyMode.vpn => '当前使用 VPN 模式',
-      ProxyMode.system => '当前使用系统代理',
-    };
-    final description = switch (mode) {
-      ProxyMode.tun => '通过虚拟网卡接管更多应用流量。',
-      ProxyMode.vpn => '移动端 VPN 模式由系统网络层接管。',
-      ProxyMode.system => '浏览器和常规应用会跟随系统代理设置。',
-    };
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
+        color: const Color(0xFFFAFBFD),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: keliLineSoft),
       ),
+      child: const Column(
+        children: [
+          _RouteSummaryRow(
+              icon: Icons.alt_route_rounded, label: '路由规则', value: '跟随配置'),
+          SizedBox(height: 6),
+          _RouteSummaryRow(
+              icon: Icons.router_outlined, label: '局域网规则', value: '跟随配置'),
+          SizedBox(height: 6),
+          _RouteSummaryRow(
+              icon: Icons.dns_outlined, label: 'DNS', value: '跟随配置'),
+        ],
+      ),
+    );
+  }
+}
+
+class _RouteSummaryRow extends StatelessWidget {
+  const _RouteSummaryRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: keliMuted, size: 15),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: keliMuted, fontSize: 12)),
+        ),
+        Text(value,
+            style: const TextStyle(
+                fontSize: 12, color: keliInk, fontWeight: FontWeight.w900)),
+      ],
+    );
+  }
+}
+
+class _CoreStatusStrip extends StatelessWidget {
+  const _CoreStatusStrip({
+    required this.coreText,
+    required this.latencyText,
+  });
+
+  final String coreText;
+  final String latencyText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: keliBlueSoft.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFD8E8FF)),
+      ),
       child: Row(
         children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: keliBlueSoft,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: const Icon(Icons.route_outlined,
-                color: keliBlueStrong, size: 17),
-          ),
-          const SizedBox(width: 10),
+          const Icon(Icons.memory_outlined, color: keliBlueStrong, size: 16),
+          const SizedBox(width: 7),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 3),
-                Text(description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: keliMuted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        height: 1.25)),
-              ],
-            ),
+            child: Text('核心 $coreText',
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
           ),
+          const SizedBox(width: 8),
+          Text(latencyText,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: keliBlueStrong,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900)),
         ],
       ),
     );
