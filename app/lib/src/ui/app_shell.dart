@@ -499,7 +499,7 @@ class _VersionBlock extends StatelessWidget {
           children: [
             StatusDot(color: keliGreen),
             SizedBox(width: 5),
-            Text('v0.1.17',
+            Text('v0.1.18',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ],
         ),
@@ -3644,20 +3644,7 @@ class _StorePeriodPanel extends StatelessWidget {
             Text(title,
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            if (plan != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                planSummaryText(plan!, trafficMode: trafficMode),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: keliMuted,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-            const SizedBox(height: 22),
+            const SizedBox(height: 16),
             if (plan == null || options.isEmpty)
               const _EmptyStoreBox(message: '当前没有可购买项目')
             else
@@ -7597,18 +7584,6 @@ bool isTrafficPackPlan(StorePlan plan) {
 
 bool isTrafficPeriod(PlanPeriodOption option) {
   return option.period == 'onetime_price' || option.period == 'reset_price';
-}
-
-String planSummaryText(StorePlan plan, {required bool trafficMode}) {
-  final parts = <String>[
-    trafficMode ? '一次性流量 ${plan.trafficLabel}' : '每月流量 ${plan.trafficLabel}',
-    '设备 ${planDeviceLimitText(plan)}',
-    '速率 ${planSpeedLimitText(plan)}',
-  ];
-  if (!trafficMode) {
-    parts.add('重置 ${planResetText(plan)}');
-  }
-  return parts.join(' · ');
 }
 
 String planDeviceLimitText(StorePlan plan) {
