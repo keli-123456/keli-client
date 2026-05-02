@@ -10,8 +10,13 @@ import 'package:keli_client/src/services/keli_api.dart';
 import 'package:keli_client/src/services/session_store.dart';
 import 'package:keli_client/src/state/app_controller.dart';
 import 'package:keli_client/src/ui/app_shell.dart';
+import 'package:keli_client/src/ui/login_screen.dart';
 
 void main() {
+  test('login screen remains exported after shell split', () {
+    expect(const LoginScreen(), isA<LoginScreen>());
+  });
+
   test('Keli Client bootstraps through injected services', () async {
     final temp = await Directory.systemTemp.createTemp('keli-client-test-');
     final controller = AppController(
@@ -141,7 +146,8 @@ void main() {
       <String>['stripe'],
     );
     expect(
-      paymentMethodsForOrder(methods, planOrder).map((method) => method.payment),
+      paymentMethodsForOrder(methods, planOrder)
+          .map((method) => method.payment),
       <String>['balance', 'stripe'],
     );
   });
@@ -236,7 +242,8 @@ void main() {
     );
   });
 
-  test('active current plan with renew disabled is blocked before checkout', () {
+  test('active current plan with renew disabled is blocked before checkout',
+      () {
     final profile = AppProfile(
       email: 'test@example.com',
       planName: 'Legacy',

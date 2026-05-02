@@ -10,6 +10,8 @@ import '../app_metadata.dart';
 import '../models.dart';
 import '../state/app_controller.dart';
 import '../theme.dart';
+import 'common_widgets.dart';
+import 'login_screen.dart';
 
 const double keliDesktopBreakpoint = 1100;
 
@@ -90,160 +92,6 @@ class AppShell extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
-
-class _LoginScreenState extends State<LoginScreen> {
-  final panelController = TextEditingController(text: 'https://sp.huhu.icu');
-  final apiPathController = TextEditingController(text: '/api/v1');
-  final emailController = TextEditingController();
-  final passwordController = TextEditingController();
-  bool showPassword = false;
-
-  @override
-  void dispose() {
-    panelController.dispose();
-    apiPathController.dispose();
-    emailController.dispose();
-    passwordController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = AppControllerScope.of(context);
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
-            child: KeliCard(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: keliBlue,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.bolt, color: Colors.white),
-                      ),
-                      const SizedBox(width: 12),
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Keli Client',
-                              style: TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.w900)),
-                          Text('登录你的面板账号', style: TextStyle(color: keliMuted)),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  TextField(
-                    controller: panelController,
-                    decoration: const InputDecoration(
-                      labelText: '面板地址',
-                      hintText: 'https://example.com',
-                      prefixIcon: Icon(Icons.public),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: apiPathController,
-                    decoration: const InputDecoration(
-                      labelText: 'API 路径',
-                      hintText: '/api/v1',
-                      prefixIcon: Icon(Icons.route_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: '邮箱',
-                      prefixIcon: Icon(Icons.alternate_email),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: !showPassword,
-                    onSubmitted: (_) => _submit(controller),
-                    decoration: InputDecoration(
-                      labelText: '密码',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        onPressed: () =>
-                            setState(() => showPassword = !showPassword),
-                        icon: Icon(showPassword
-                            ? Icons.visibility_off
-                            : Icons.visibility),
-                      ),
-                    ),
-                  ),
-                  if (controller.lastError != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFEF2F2),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFFECACA)),
-                      ),
-                      child: Text(controller.lastError!,
-                          style: const TextStyle(color: keliRed)),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: controller.isLoggingIn
-                          ? null
-                          : () => _submit(controller),
-                      icon: controller.isLoggingIn
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.login),
-                      label: Text(controller.isLoggingIn ? '登录中' : '登录'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _submit(AppController controller) {
-    controller.login(
-      baseUrl: panelController.text,
-      apiPrefix: apiPathController.text,
-      email: emailController.text,
-      password: passwordController.text,
     );
   }
 }
@@ -3204,8 +3052,8 @@ class _StoreScreenState extends State<StoreScreen> {
                 onPressed: controller.isPurchasing
                     ? null
                     : () => handleStoreRecharge(context, controller),
-                icon: const Icon(Icons.account_balance_wallet_outlined,
-                    size: 18),
+                icon:
+                    const Icon(Icons.account_balance_wallet_outlined, size: 18),
                 label: Text(isDesktop ? '余额充值' : '充值'),
               ),
               OutlinedButton.icon(
@@ -4623,9 +4471,8 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
       setState(() {
         validatedCouponCode = code;
         couponDiscountCents = discount;
-        couponMessage = discount > 0
-            ? '优惠码可用，预计优惠 ${priceText(discount)}'
-            : '优惠码可用';
+        couponMessage =
+            discount > 0 ? '优惠码可用，预计优惠 ${priceText(discount)}' : '优惠码可用';
         couponMessageIsError = false;
       });
     } catch (error) {
@@ -5088,8 +4935,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                           children: [
                             const Text('优惠码',
                                 style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w900)),
+                                    fontSize: 14, fontWeight: FontWeight.w900)),
                             const SizedBox(height: 10),
                             Row(
                               children: [
@@ -5561,8 +5407,7 @@ class _RechargeDialogState extends State<_RechargeDialog> {
                           children: [
                             const Text('余额充值',
                                 style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900)),
+                                    fontSize: 18, fontWeight: FontWeight.w900)),
                             const SizedBox(height: 2),
                             Text(
                                 '当前余额 ${priceText(widget.controller.profile?.accountBalanceCents ?? 0)}',
@@ -5598,8 +5443,13 @@ class _RechargeDialogState extends State<_RechargeDialog> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      for (final cents
-                          in const [1000, 3000, 5000, 10000, 20000])
+                      for (final cents in const [
+                        1000,
+                        3000,
+                        5000,
+                        10000,
+                        20000
+                      ])
                         ActionChip(
                           label: Text(priceText(cents)),
                           onPressed: busy || hasTradeNo
@@ -5612,8 +5462,7 @@ class _RechargeDialogState extends State<_RechargeDialog> {
                   _CheckoutInfoBox(
                     icon: Icons.info_outline,
                     title: '充值说明',
-                    message:
-                        '将创建真实面板充值订单。支付完成后余额会刷新；充值订单不可使用余额支付。',
+                    message: '将创建真实面板充值订单。支付完成后余额会刷新；充值订单不可使用余额支付。',
                   ),
                   if (displayAmount > 0) ...[
                     const SizedBox(height: 12),
@@ -5702,8 +5551,7 @@ class _RechargeDialogState extends State<_RechargeDialog> {
                                   if (mounted) {
                                     setState(() {
                                       result = PurchaseResult(
-                                          message: '订单号已复制',
-                                          tradeNo: tradeNo);
+                                          message: '订单号已复制', tradeNo: tradeNo);
                                       resultDetail = '可以到面板订单页继续支付。';
                                       resultIsError = false;
                                     });
@@ -5730,8 +5578,7 @@ class _RechargeDialogState extends State<_RechargeDialog> {
                                   if (mounted) {
                                     setState(() {
                                       result = PurchaseResult(
-                                          message: '订单号已复制',
-                                          tradeNo: tradeNo);
+                                          message: '订单号已复制', tradeNo: tradeNo);
                                       resultDetail = '可以到面板订单页继续支付。';
                                       resultIsError = false;
                                     });
@@ -6209,8 +6056,7 @@ class _PendingOrderSummary extends StatelessWidget {
                 label: '余额抵扣', value: priceText(order.balanceAmountCents!)),
           if (order.isRecharge && order.bonusAmountCents != null)
             _StoreOrderDetailLine(
-                label: '赠送金额',
-                value: '+${priceText(order.bonusAmountCents!)}'),
+                label: '赠送金额', value: '+${priceText(order.bonusAmountCents!)}'),
           if (order.upgradeCreditAmountCents != null)
             _StoreOrderDetailLine(
                 label: '升级抵扣',
@@ -6268,8 +6114,7 @@ class _StoreOrderDetail extends StatelessWidget {
                 label: '余额抵扣', value: priceText(order.balanceAmountCents!)),
           if (order.isRecharge && order.bonusAmountCents != null)
             _StoreOrderDetailLine(
-                label: '赠送金额',
-                value: '+${priceText(order.bonusAmountCents!)}'),
+                label: '赠送金额', value: '+${priceText(order.bonusAmountCents!)}'),
           if (order.handlingAmountCents != null)
             _StoreOrderDetailLine(
                 label: '手续费', value: priceText(order.handlingAmountCents!)),
@@ -8270,42 +8115,6 @@ class _PageHeader extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class KeliCard extends StatelessWidget {
-  const KeliCard({
-    required this.child,
-    this.padding = const EdgeInsets.all(18),
-    super.key,
-  });
-
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: keliPanel,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: keliLineSoft),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.026),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: padding,
-          child: child,
-        ),
-      ),
     );
   }
 }
