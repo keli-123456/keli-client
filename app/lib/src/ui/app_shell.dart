@@ -14,6 +14,8 @@ import 'common_widgets.dart';
 import 'login_screen.dart';
 
 const double keliDesktopBreakpoint = 1100;
+const MethodChannel _platformChannel =
+    MethodChannel('com.keli.keli_client/platform');
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key});
@@ -1790,11 +1792,27 @@ class _NodePickerDialogState extends State<_NodePickerDialog> {
                       )
                     : ListView.separated(
                         shrinkWrap: true,
-                        itemCount: nodes.length,
+                        itemCount: nodes.length +
+                            (controller.canAutoSelectOnConnect ? 1 : 0),
                         separatorBuilder: (_, __) =>
                             const Divider(height: 1, color: keliLineSoft),
                         itemBuilder: (context, index) {
-                          final node = nodes[index];
+                          if (controller.canAutoSelectOnConnect && index == 0) {
+                            return _NodePickerRow(
+                              node: controller.automaticNode,
+                              selected: controller.isAutoSelectOnConnect,
+                              onTap: () async {
+                                await controller.selectAutoNode();
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                            );
+                          }
+                          final nodeIndex = controller.canAutoSelectOnConnect
+                              ? index - 1
+                              : index;
+                          final node = nodes[nodeIndex];
                           final selected = controller.selectedNodeId == node.id;
                           return _NodePickerRow(
                             node: node,
@@ -9049,7 +9067,13 @@ String storeOrderDateText(DateTime? value) {
 
 Future<bool> openExternalUrl(String url) async {
   try {
-    if (Platform.isWindows) {
+    if (Platform.isAndroid) {
+      return await _platformChannel.invokeMethod<bool>(
+            'openUrl',
+            <String, Object?>{'url': url},
+          ) ??
+          false;
+    } else if (Platform.isWindows) {
       final result = await Process.run(
           'rundll32.exe', ['url.dll,FileProtocolHandler', url]);
       if (result.exitCode == 0) {

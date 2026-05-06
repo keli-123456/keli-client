@@ -30,6 +30,18 @@ class _LatencyMeasurement {
   final String? failureReason;
 }
 
+class _ConnectionConfigPlan {
+  const _ConnectionConfigPlan({
+    required this.config,
+    required this.targetNode,
+    required this.automatic,
+  });
+
+  final Map<String, Object?> config;
+  final ProxyNode targetNode;
+  final bool automatic;
+}
+
 class AppController extends ChangeNotifier {
   AppController({
     required this.api,
@@ -87,6 +99,9 @@ class AppController extends ChangeNotifier {
   Set<String> _dismissedAnnouncementKeys = <String>{};
 
   ProxyNode? get selectedNode {
+    if (isAutoSelectOnConnect) {
+      return automaticNode;
+    }
     for (final node in nodes) {
       if (node.id == selectedNodeId) {
         return node;
@@ -94,6 +109,32 @@ class AppController extends ChangeNotifier {
     }
     return nodes.isEmpty ? null : nodes.first;
   }
+
+  ProxyNode? get _selectedRealNode {
+    for (final node in nodes) {
+      if (node.id == selectedNodeId) {
+        return node;
+      }
+    }
+    return null;
+  }
+
+  ProxyNode get automaticNode {
+    return const ProxyNode(
+      id: 0,
+      name: '自动选择',
+      protocol: 'URLTest',
+      rate: 1,
+      isOnline: true,
+      latencyMs: null,
+      tags: ['auto'],
+    );
+  }
+
+  bool get canAutoSelectOnConnect => nodes.length > 1;
+
+  bool get isAutoSelectOnConnect =>
+      canAutoSelectOnConnect && selectedNodeId == automaticNode.id;
 
   List<ProxyNode> get filteredNodes {
     return switch (nodeFilter) {
@@ -186,7 +227,8 @@ class AppController extends ChangeNotifier {
       _latencyFailureReasons.clear();
       _lastAutoLatencyNodeSignature = _latencyNodeSignature();
       if (nodes.isNotEmpty) {
-        selectedNodeId = nodes.first.id;
+        selectedNodeId =
+            canAutoSelectOnConnect ? automaticNode.id : nodes.first.id;
       }
       _log('INFO', '已加载用户和节点数据，节点 ${nodes.length} 个');
       if (nodes.isEmpty) {
@@ -452,8 +494,7 @@ class AppController extends ChangeNotifier {
 
   Future<String> createPlanOrder(
     StorePlan plan,
-    PlanPeriodOption period,
-    {
+    PlanPeriodOption period, {
     String? couponCode,
     int? estimatedTotalAmountCents,
   }) async {
@@ -817,6 +858,19 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> selectAutoNode() async {
+    if (!canAutoSelectOnConnect) {
+      return;
+    }
+    selectedNodeId = automaticNode.id;
+    _log('INFO', '已选择自动选择节点');
+    notifyListeners();
+
+    if (connectionState == ConnectionStateKind.connected) {
+      await connect();
+    }
+  }
+
   void toggleFavorite(ProxyNode node) {
     nodes = nodes
         .map((item) => item.id == node.id
@@ -838,27 +892,30 @@ class AppController extends ChangeNotifier {
       duration: Duration.zero,
     );
     connectionState = ConnectionStateKind.connecting;
-    _log('INFO', '正在连接 ${node.name}');
+    _log(
+      'INFO',
+      isAutoSelectOnConnect ? '正在连接，自动选择可用节点' : '正在连接 ${node.name}',
+    );
     notifyListeners();
 
     try {
-      final config = await api.fetchSingBoxConfig(
-        serverId: node.id,
-        platform: _appConfigPlatform,
-        coreVersion: '1.13.11',
-      );
+      final plan = await _resolveConnectionConfig(node);
       await coreManager.prepare();
       final applied =
-          await coreManager.applyConfig(config, mode: _effectiveProxyMode);
+          await coreManager.applyConfig(plan.config, mode: _effectiveProxyMode);
       _log('INFO', '配置已写入 ${applied.configFile.path}');
       _log('INFO', '本地代理 ${applied.localProxyType}:${applied.localProxyPort}');
       if (applied.clashApiAddress != null) {
         _log('INFO', '本地核心 API ${applied.clashApiAddress}');
       }
-      await coreManager.connect(node: node, mode: _effectiveProxyMode);
+      await coreManager.connect(
+          node: plan.targetNode, mode: _effectiveProxyMode);
       connectionState = ConnectionStateKind.connected;
       _startRuntimeTimer();
-      _log('INFO', '连接成功: ${node.name}');
+      _log(
+        'INFO',
+        plan.automatic ? '连接成功: 自动选择可用节点' : '连接成功: ${node.name}',
+      );
     } catch (error) {
       _stopRuntimeTimer();
       connectionState = ConnectionStateKind.error;
@@ -869,6 +926,58 @@ class AppController extends ChangeNotifier {
     } finally {
       notifyListeners();
     }
+  }
+
+  Future<_ConnectionConfigPlan> _resolveConnectionConfig(
+    ProxyNode selected,
+  ) async {
+    if (isAutoSelectOnConnect) {
+      try {
+        final config = await api.fetchSingBoxBatchConfig(
+          platform: _appConfigPlatform,
+          coreVersion: '1.13.11',
+        );
+        return _ConnectionConfigPlan(
+          config: config,
+          targetNode: automaticNode,
+          automatic: true,
+        );
+      } catch (error) {
+        final fallback = _fallbackConnectionNode();
+        _log('WARN', '全量自动选择配置不可用，回退连接 ${fallback.name}: $error');
+        final config = await api.fetchSingBoxConfig(
+          serverId: fallback.id,
+          platform: _appConfigPlatform,
+          coreVersion: '1.13.11',
+        );
+        return _ConnectionConfigPlan(
+          config: config,
+          targetNode: fallback,
+          automatic: false,
+        );
+      }
+    }
+
+    final target = _selectedRealNode ?? selected;
+    final config = await api.fetchSingBoxConfig(
+      serverId: target.id,
+      platform: _appConfigPlatform,
+      coreVersion: '1.13.11',
+    );
+    return _ConnectionConfigPlan(
+      config: config,
+      targetNode: target,
+      automatic: false,
+    );
+  }
+
+  ProxyNode _fallbackConnectionNode() {
+    for (final node in nodes) {
+      if (node.isOnline) {
+        return node;
+      }
+    }
+    return nodes.first;
   }
 
   Future<void> disconnect() async {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:keli_client/src/models.dart';
@@ -507,6 +508,95 @@ void main() {
     }
   });
 
+  test('connect prefers full auto-select config when multiple nodes exist',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    final api = RecordingConnectionApi(
+      nodes: const [
+        ProxyNode(
+          id: 1,
+          name: 'edge-a',
+          protocol: 'VLESS',
+          rate: 1,
+          isOnline: true,
+          latencyMs: null,
+        ),
+        ProxyNode(
+          id: 2,
+          name: 'edge-b',
+          protocol: 'Trojan',
+          rate: 1,
+          isOnline: true,
+          latencyMs: null,
+        ),
+      ],
+    );
+    final core = RecordingConnectionCoreManager();
+    final controller = AppController(
+      api: api,
+      coreManager: core,
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+      await controller.connect();
+
+      expect(api.batchConfigFetches, 1);
+      expect(api.singleConfigFetches, 0);
+      expect(core.appliedConfig?['source'], 'batch');
+      expect(core.connectedNode?.name, '自动选择');
+      expect(controller.connectionState, ConnectionStateKind.connected);
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
+  test('manual node selection still pins a single-node config', () async {
+    final temp = await Directory.systemTemp.createTemp('keli-client-test-');
+    const nodes = [
+      ProxyNode(
+        id: 1,
+        name: 'edge-a',
+        protocol: 'VLESS',
+        rate: 1,
+        isOnline: true,
+        latencyMs: null,
+      ),
+      ProxyNode(
+        id: 2,
+        name: 'edge-b',
+        protocol: 'Trojan',
+        rate: 1,
+        isOnline: true,
+        latencyMs: null,
+      ),
+    ];
+    final api = RecordingConnectionApi(nodes: nodes);
+    final core = RecordingConnectionCoreManager();
+    final controller = AppController(
+      api: api,
+      coreManager: core,
+      sessionStore: SessionStore(root: temp),
+    );
+
+    try {
+      await controller.bootstrap();
+      await controller.selectNode(nodes.last);
+      await controller.connect();
+
+      expect(api.batchConfigFetches, 0);
+      expect(api.singleConfigFetches, 1);
+      expect(api.lastSingleServerId, 2);
+      expect(core.appliedConfig?['source'], 'single');
+      expect(core.connectedNode?.name, 'edge-b');
+    } finally {
+      controller.dispose();
+      await temp.delete(recursive: true);
+    }
+  });
+
   test('endpoint resolver combines cache, well-known, txt and bootstrap',
       () async {
     final resolver = ApiEndpointResolver(
@@ -562,6 +652,97 @@ void main() {
         'https://bootstrap-api.example',
       ]),
     );
+  });
+
+  test('endpoint resolver accepts Ed25519 signed discovery config', () async {
+    final publicKey = await _ed25519TestPublicKey();
+    final signedConfig = await _ed25519SignedDiscoveryConfig(<String, Object?>{
+      'api_base': 'https://signed-api.example',
+      'api_prefix': '/api/v1',
+      'backup_api_bases': ['https://signed-backup.example'],
+      'panel_host': 'panel.example',
+    });
+
+    final resolver = ApiEndpointResolver(
+      signatureVerifier: DiscoverySignatureVerifier(publicKey: publicKey),
+      client: FakeDiscoveryClient(
+        jsonByUrl: <String, Map<String, Object?>>{
+          'https://panel.example/.well-known/keli-client.json': signedConfig,
+        },
+      ),
+    );
+
+    final candidates = await resolver.resolveLoginCandidates(
+      panelUrl: 'https://panel.example',
+      apiPrefix: '/api/v1',
+    );
+
+    expect(
+      candidates.map((candidate) => candidate.baseUrl),
+      containsAll(
+          ['https://signed-api.example', 'https://signed-backup.example']),
+    );
+  });
+
+  test('endpoint resolver ignores invalid signed discovery config', () async {
+    final publicKey = await _ed25519TestPublicKey();
+    final resolver = ApiEndpointResolver(
+      signatureVerifier: DiscoverySignatureVerifier(publicKey: publicKey),
+      client: FakeDiscoveryClient(
+        jsonByUrl: <String, Map<String, Object?>>{
+          'https://panel.example/.well-known/keli-client.json':
+              <String, Object?>{
+            'api_base': 'https://tampered-api.example',
+            'api_prefix': '/api/v1',
+            'panel_host': 'panel.example',
+            'signature': 'ed25519:bad',
+          },
+        },
+      ),
+    );
+
+    final candidates = await resolver.resolveLoginCandidates(
+      panelUrl: 'https://panel.example',
+      apiPrefix: '/api/v1',
+    );
+
+    expect(
+      candidates.map((candidate) => candidate.baseUrl),
+      isNot(contains('https://tampered-api.example')),
+    );
+  });
+
+  test(
+      'endpoint resolver requires TXT api signature when public key is configured',
+      () async {
+    final publicKey = await _ed25519TestPublicKey();
+    final signedTxtConfig = <String, Object?>{
+      'api_base': 'https://signed-txt.example',
+      'api_prefix': '/api/v1',
+      'panel_host': 'panel.example',
+    };
+    final signedTxtSignature =
+        await _ed25519DiscoverySignature(signedTxtConfig);
+    final resolver = ApiEndpointResolver(
+      signatureVerifier: DiscoverySignatureVerifier(publicKey: publicKey),
+      client: FakeDiscoveryClient(
+        txtByName: <String, List<String>>{
+          '_keli-client.panel.example': [
+            'v=keli1; api=https://unsigned-txt.example',
+            'v=keli1; api=https://signed-txt.example; sig=$signedTxtSignature',
+          ],
+        },
+      ),
+    );
+
+    final candidates = await resolver.resolveLoginCandidates(
+      panelUrl: 'https://panel.example',
+      apiPrefix: '/api/v1',
+    );
+
+    final bases = candidates.map((candidate) => candidate.baseUrl);
+    expect(bases, contains('https://signed-txt.example'));
+    expect(bases, isNot(contains('https://unsigned-txt.example')));
   });
 
   test('login falls back across resolved API candidates and caches winner',
@@ -633,6 +814,70 @@ void main() {
       isNot(contains('https://sp.huhu.icu')),
     );
   });
+}
+
+const List<int> _ed25519Seed = <int>[
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+];
+
+Future<String> _ed25519TestPublicKey() async {
+  final keyPair = await Ed25519().newKeyPairFromSeed(_ed25519Seed);
+  final publicKey = await keyPair.extractPublicKey();
+  return 'ed25519:${_base64UrlNoPadding(publicKey.bytes)}';
+}
+
+Future<Map<String, Object?>> _ed25519SignedDiscoveryConfig(
+  Map<String, Object?> config,
+) async {
+  final signed = Map<String, Object?>.from(config);
+  signed['signature'] = await _ed25519DiscoverySignature(signed);
+  return signed;
+}
+
+Future<String> _ed25519DiscoverySignature(
+  Map<String, Object?> config,
+) async {
+  final keyPair = await Ed25519().newKeyPairFromSeed(_ed25519Seed);
+  final signature = await Ed25519().sign(
+    utf8.encode(const DiscoverySignatureVerifier().signingPayload(config)),
+    keyPair: keyPair,
+  );
+  return 'ed25519:${_base64UrlNoPadding(signature.bytes)}';
+}
+
+String _base64UrlNoPadding(List<int> bytes) {
+  return base64Url.encode(bytes).replaceAll('=', '');
 }
 
 class FakeDiscoveryClient implements EndpointDiscoveryClient {
@@ -829,6 +1074,34 @@ class RecordingLoginApi extends MockKeliApi {
   }
 }
 
+class RecordingConnectionApi extends MockKeliApi {
+  RecordingConnectionApi({required super.nodes});
+
+  int batchConfigFetches = 0;
+  int singleConfigFetches = 0;
+  int? lastSingleServerId;
+
+  @override
+  Future<Map<String, Object?>> fetchSingBoxBatchConfig({
+    required String platform,
+    String? coreVersion,
+  }) async {
+    batchConfigFetches++;
+    return <String, Object?>{'source': 'batch'};
+  }
+
+  @override
+  Future<Map<String, Object?>> fetchSingBoxConfig({
+    required int serverId,
+    required String platform,
+    String? coreVersion,
+  }) async {
+    singleConfigFetches++;
+    lastSingleServerId = serverId;
+    return <String, Object?>{'source': 'single', 'server_id': serverId};
+  }
+}
+
 class MockCoreManager implements CoreManager {
   @override
   bool get supportsLatencyTesting => true;
@@ -906,6 +1179,28 @@ class MockCoreManager implements CoreManager {
   @override
   Stream<CoreTrafficSample> watchTraffic() {
     return const Stream<CoreTrafficSample>.empty();
+  }
+}
+
+class RecordingConnectionCoreManager extends MockCoreManager {
+  Map<String, Object?>? appliedConfig;
+  ProxyNode? connectedNode;
+
+  @override
+  Future<CoreApplyResult> applyConfig(
+    Map<String, Object?> config, {
+    ProxyMode mode = ProxyMode.system,
+  }) async {
+    appliedConfig = config;
+    return super.applyConfig(config, mode: mode);
+  }
+
+  @override
+  Future<void> connect({
+    required ProxyNode node,
+    required ProxyMode mode,
+  }) async {
+    connectedNode = node;
   }
 }
 

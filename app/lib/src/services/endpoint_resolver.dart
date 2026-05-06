@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
+
 import '../app_metadata.dart';
 
 const String defaultApiPrefix = '/api/v1';
@@ -149,11 +151,15 @@ class ApiEndpointResolver implements EndpointResolver {
   ApiEndpointResolver({
     EndpointDiscoveryClient? client,
     List<String> bootstrapUrls = builtInBootstrapUrls,
+    DiscoverySignatureVerifier signatureVerifier =
+        const DiscoverySignatureVerifier(),
   })  : _client = client ?? HttpEndpointDiscoveryClient(),
-        _bootstrapUrls = bootstrapUrls;
+        _bootstrapUrls = bootstrapUrls,
+        _signatureVerifier = signatureVerifier;
 
   final EndpointDiscoveryClient _client;
   final List<String> _bootstrapUrls;
+  final DiscoverySignatureVerifier _signatureVerifier;
 
   @override
   Future<List<ApiEndpointCandidate>> resolveLoginCandidates({
@@ -270,6 +276,16 @@ class ApiEndpointResolver implements EndpointResolver {
       if (apiBase != null) {
         final prefix =
             parsed['prefix'] ?? parsed['api_prefix'] ?? defaultApiPrefix;
+        final rawConfig = <String, Object?>{
+          'api_base': apiBase,
+          'api_prefix': prefix,
+          'panel_host': host,
+          if (parsed['signature'] != null || parsed['sig'] != null)
+            'signature': parsed['signature'] ?? parsed['sig'],
+        };
+        if (!await _signatureVerifier.verify(rawConfig)) {
+          continue;
+        }
         try {
           add(ApiEndpointCandidate(
             baseUrl: normalizeBaseUrl(apiBase),
@@ -304,6 +320,9 @@ class ApiEndpointResolver implements EndpointResolver {
   Future<ApiEndpointConfig?> _fetchConfig(Uri uri, String source) async {
     try {
       final json = await _client.fetchJson(uri);
+      if (json == null || !await _signatureVerifier.verify(json)) {
+        return null;
+      }
       return ApiEndpointConfig.fromJson(json, source: source);
     } catch (_) {
       return null;
@@ -342,6 +361,100 @@ class ApiEndpointResolver implements EndpointResolver {
       return const <String, String>{};
     }
     return values;
+  }
+}
+
+class DiscoverySignatureVerifier {
+  const DiscoverySignatureVerifier({
+    this.publicKey = const String.fromEnvironment(
+      'KELI_CLIENT_DISCOVERY_PUBLIC_KEY',
+    ),
+  });
+
+  final String publicKey;
+
+  bool get isEnabled => publicKey.trim().isNotEmpty;
+
+  Future<bool> verify(Map<String, Object?> config) async {
+    if (!isEnabled) {
+      return true;
+    }
+    final actual = _stringValue(config['signature'])?.trim();
+    if (actual == null || actual.isEmpty) {
+      return false;
+    }
+    try {
+      final signatureBytes = _decodePrefixedBase64Url(actual, 'ed25519:');
+      final publicKeyBytes = _decodePrefixedBase64Url(publicKey, 'ed25519:');
+      if (signatureBytes.length != 64 || publicKeyBytes.length != 32) {
+        return false;
+      }
+      return await Ed25519().verify(
+        utf8.encode(signingPayload(config)),
+        signature: Signature(
+          signatureBytes,
+          publicKey: SimplePublicKey(
+            publicKeyBytes,
+            type: KeyPairType.ed25519,
+          ),
+        ),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String signingPayload(Map<String, Object?> config) {
+    final apiBase = _stringValue(
+      config['api_base'] ??
+          config['apiBase'] ??
+          config['base_url'] ??
+          config['baseUrl'],
+    );
+    if (apiBase == null || apiBase.trim().isEmpty) {
+      throw const EndpointResolutionException(
+          'discovery config missing api_base');
+    }
+
+    final canonical = <String, Object?>{
+      'api_base': normalizeBaseUrl(apiBase),
+      'api_prefix': normalizeApiPrefix(
+        _stringValue(
+              config['api_prefix'] ?? config['apiPrefix'] ?? config['prefix'],
+            ) ??
+            defaultApiPrefix,
+      ),
+      'backup_api_bases': _stringList(
+        config['backup_api_bases'] ??
+            config['backupApiBases'] ??
+            config['backups'],
+      ).map(normalizeBaseUrl).toList(),
+      'bootstrap_urls': _stringList(
+        config['bootstrap_urls'] ??
+            config['bootstrapUrls'] ??
+            config['bootstrap'],
+      ),
+      'panel_host':
+          (_stringValue(config['panel_host'] ?? config['panelHost']) ?? '')
+              .toLowerCase(),
+    };
+
+    return jsonEncode(canonical);
+  }
+
+  List<int> _decodePrefixedBase64Url(String value, String prefix) {
+    var encoded = value.trim();
+    if (encoded.startsWith(prefix)) {
+      encoded = encoded.substring(prefix.length);
+    }
+    final padding = encoded.length % 4;
+    if (padding == 1) {
+      throw const FormatException('invalid base64url length');
+    }
+    if (padding > 0) {
+      encoded += '=' * (4 - padding);
+    }
+    return base64Url.decode(encoded);
   }
 }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -69,6 +70,9 @@ CoreManager createCoreManager() {
   }
   if (Platform.isWindows) {
     return WindowsCoreManager();
+  }
+  if (Platform.isMacOS) {
+    return MacOSCoreManager();
   }
   return UnsupportedCoreManager();
 }
@@ -495,7 +499,7 @@ class WindowsCoreManager implements CoreManager {
     await _configDir.create(recursive: true);
     await _logsDir.create(recursive: true);
 
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows && !Platform.isMacOS) {
       return;
     }
     if (!await _coreExe.exists()) {
@@ -534,8 +538,8 @@ class WindowsCoreManager implements CoreManager {
     required ProxyNode node,
     required ProxyMode mode,
   }) async {
-    if (!Platform.isWindows) {
-      throw CoreException('当前只实现 Windows 本地核心管理；Android 需要 VPNService 阶段接入');
+    if (!Platform.isWindows && !Platform.isMacOS) {
+      throw CoreException('当前平台暂未接入本地核心');
     }
     if (!await _coreExe.exists()) {
       await prepare();
@@ -576,7 +580,7 @@ class WindowsCoreManager implements CoreManager {
 
   @override
   Future<void> disconnect({bool restoreProxy = true}) async {
-    if (restoreProxy && Platform.isWindows) {
+    if (restoreProxy && (Platform.isWindows || Platform.isMacOS)) {
       await _restoreSystemProxy();
     }
     final process = _process;
@@ -602,7 +606,9 @@ class WindowsCoreManager implements CoreManager {
     ProxyMode mode = ProxyMode.system,
     LatencyTestMode testMode = LatencyTestMode.quick,
   }) async {
-    if (!Platform.isWindows || config == null || !node.isOnline) {
+    if ((!Platform.isWindows && !Platform.isMacOS) ||
+        config == null ||
+        !node.isOnline) {
       return null;
     }
     if (!await _coreExe.exists()) {
@@ -685,7 +691,9 @@ class WindowsCoreManager implements CoreManager {
       for (final node in nodes) node.id: null,
     };
     final onlineNodes = nodes.where((node) => node.isOnline).toList();
-    if (!Platform.isWindows || config == null || onlineNodes.isEmpty) {
+    if ((!Platform.isWindows && !Platform.isMacOS) ||
+        config == null ||
+        onlineNodes.isEmpty) {
       return results;
     }
     if (!await _coreExe.exists()) {
@@ -841,7 +849,7 @@ class WindowsCoreManager implements CoreManager {
     required bool coreExists,
     required bool configExists,
   }) async {
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows && !Platform.isMacOS) {
       return const _ConfigCheckResult(
           status: 'skipped', output: '当前平台未接入本地 sing-box 校验');
     }
@@ -1953,6 +1961,349 @@ public class NativeMethods {
   }
 
   String _psQuote(String value) => "'${value.replaceAll("'", "''")}'";
+}
+
+class MacOSCoreManager extends WindowsCoreManager {
+  MacOSCoreManager({super.runtimeRoot});
+
+  @override
+  File get _coreExe =>
+      File('${_coreDir.path}${Platform.pathSeparator}sing-box');
+
+  @override
+  Future<void> _downloadSingBox() async {
+    final asset = await _resolveLatestMacOSAsset();
+    final archiveFile =
+        File('${runtimeRoot.path}${Platform.pathSeparator}sing-box-macos.tgz');
+    _writeLog('Downloading sing-box ${asset.version} for macOS');
+    await _downloadFile(Uri.parse(asset.url), archiveFile);
+    final extractDir = Directory(
+        '${runtimeRoot.path}${Platform.pathSeparator}sing-box-extract');
+    if (await extractDir.exists()) {
+      await extractDir.delete(recursive: true);
+    }
+    await extractDir.create(recursive: true);
+    final result = await Process.run(
+      'tar',
+      ['-xzf', archiveFile.path, '-C', extractDir.path],
+    );
+    if (result.exitCode != 0) {
+      throw CoreException('解压 sing-box 失败: ${result.stderr}');
+    }
+    final binary = await _findFile(extractDir, 'sing-box');
+    if (binary == null) {
+      throw const CoreException('sing-box 压缩包中没有找到 sing-box');
+    }
+    await _coreDir.create(recursive: true);
+    await binary.copy(_coreExe.path);
+    await Process.run('chmod', ['+x', _coreExe.path]);
+    await extractDir.delete(recursive: true);
+    await archiveFile.delete();
+  }
+
+  Future<_SingBoxAsset> _resolveLatestMacOSAsset() async {
+    final arch = _macOSAssetArch();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+    final request = await client.getUrl(Uri.parse(
+        'https://api.github.com/repos/SagerNet/sing-box/releases/latest'));
+    request.headers
+        .set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    request.headers.set(HttpHeaders.userAgentHeader, 'KeliClient/0.1.0');
+    final response = await request.close();
+    final raw = await response.transform(utf8.decoder).join();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw CoreException('获取 sing-box 最新版本失败: HTTP ${response.statusCode}');
+    }
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      throw const CoreException('GitHub release 响应格式错误');
+    }
+    final assets = decoded['assets'];
+    if (assets is! List) {
+      throw const CoreException('GitHub release 缺少 assets');
+    }
+
+    _SingBoxAsset? legacyFallback;
+    for (final asset in assets) {
+      if (asset is! Map) {
+        continue;
+      }
+      final name = '${asset['name']}';
+      final url = '${asset['browser_download_url']}';
+      if (!url.startsWith('http')) {
+        continue;
+      }
+      if (name.endsWith('darwin-$arch.tar.gz') && !name.contains('legacy')) {
+        return _SingBoxAsset(version: '${decoded['tag_name']}', url: url);
+      }
+      if (arch == 'amd64' &&
+          name.contains('darwin-amd64-legacy') &&
+          name.endsWith('.tar.gz')) {
+        legacyFallback =
+            _SingBoxAsset(version: '${decoded['tag_name']}', url: url);
+      }
+    }
+
+    if (legacyFallback != null) {
+      return legacyFallback;
+    }
+    throw CoreException('没有找到 sing-box darwin-$arch.tar.gz 发布包');
+  }
+
+  String _macOSAssetArch() {
+    return switch (Abi.current()) {
+      Abi.macosArm64 => 'arm64',
+      Abi.macosX64 => 'amd64',
+      _ => 'amd64',
+    };
+  }
+
+  @override
+  Future<void> _enableSystemProxy() async {
+    final services = await _macOSNetworkServices();
+    if (services.isEmpty) {
+      throw const CoreException('没有找到 macOS 网络服务，无法设置系统代理');
+    }
+    await _saveMacOSProxyState(services);
+    for (final service in services) {
+      await _setMacOSProxy(service, 'web', enabled: true);
+      await _setMacOSProxy(service, 'secureWeb', enabled: true);
+      await _setMacOSProxy(service, 'socks', enabled: true);
+    }
+    _writeLog(
+        'macOS system proxy enabled: $_localProxyListen:$_localProxyPort');
+  }
+
+  @override
+  Future<void> _restoreSystemProxy() async {
+    if (!await _proxyStateFile.exists()) {
+      return;
+    }
+    try {
+      final raw = await _proxyStateFile.readAsString();
+      final state = jsonDecode(raw);
+      if (state is! Map || state['services'] is! List) {
+        return;
+      }
+      for (final item in (state['services'] as List)) {
+        if (item is! Map) {
+          continue;
+        }
+        final service = _stringValue(item['name']);
+        if (service == null || service.isEmpty) {
+          continue;
+        }
+        await _restoreMacOSProxy(service, 'web', item['web']);
+        await _restoreMacOSProxy(service, 'secureWeb', item['secure_web']);
+        await _restoreMacOSProxy(service, 'socks', item['socks']);
+      }
+    } finally {
+      await _proxyStateFile.delete();
+    }
+  }
+
+  Future<void> _saveMacOSProxyState(List<String> services) async {
+    if (await _proxyStateFile.exists()) {
+      return;
+    }
+    final states = <Map<String, Object?>>[];
+    for (final service in services) {
+      states.add(<String, Object?>{
+        'name': service,
+        'web': (await _getMacOSProxyState(service, 'web')).toJson(),
+        'secure_web':
+            (await _getMacOSProxyState(service, 'secureWeb')).toJson(),
+        'socks': (await _getMacOSProxyState(service, 'socks')).toJson(),
+      });
+    }
+    const encoder = JsonEncoder.withIndent('  ');
+    await _proxyStateFile.parent.create(recursive: true);
+    await _proxyStateFile.writeAsString(
+      encoder.convert(<String, Object?>{'services': states}),
+    );
+  }
+
+  Future<List<String>> _macOSNetworkServices() async {
+    final result =
+        await Process.run('networksetup', ['-listallnetworkservices']);
+    if (result.exitCode != 0) {
+      throw CoreException('读取 macOS 网络服务失败: ${result.stderr}');
+    }
+    return '${result.stdout}'
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) =>
+            line.isNotEmpty &&
+            !line.startsWith('An asterisk') &&
+            !line.startsWith('*'))
+        .toList(growable: false);
+  }
+
+  Future<_MacOSProxyState> _getMacOSProxyState(
+      String service, String kind) async {
+    final command = switch (kind) {
+      'web' => '-getwebproxy',
+      'secureWeb' => '-getsecurewebproxy',
+      'socks' => '-getsocksfirewallproxy',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+    final result = await Process.run('networksetup', [command, service]);
+    if (result.exitCode != 0) {
+      return const _MacOSProxyState(enabled: false);
+    }
+    bool enabled = false;
+    String? server;
+    int? port;
+    for (final line in '${result.stdout}'.split(RegExp(r'\r?\n'))) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('Enabled:')) {
+        final value = trimmed.substring('Enabled:'.length).trim().toLowerCase();
+        enabled = value == 'yes' || value == '1' || value == 'on';
+      } else if (trimmed.startsWith('Server:')) {
+        server = trimmed.substring('Server:'.length).trim();
+      } else if (trimmed.startsWith('Port:')) {
+        port = int.tryParse(trimmed.substring('Port:'.length).trim());
+      }
+    }
+    return _MacOSProxyState(enabled: enabled, server: server, port: port);
+  }
+
+  Future<void> _setMacOSProxy(
+    String service,
+    String kind, {
+    required bool enabled,
+  }) async {
+    final setCommand = switch (kind) {
+      'web' => '-setwebproxy',
+      'secureWeb' => '-setsecurewebproxy',
+      'socks' => '-setsocksfirewallproxy',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+    if (enabled) {
+      await _runNetworkSetup(
+        [setCommand, service, _localProxyListen, '$_localProxyPort'],
+      );
+    }
+    await _setMacOSProxyState(service, kind, enabled: enabled);
+  }
+
+  Future<void> _restoreMacOSProxy(
+      String service, String kind, Object? rawState) async {
+    final state = _MacOSProxyState.fromJson(rawState);
+    if (state.enabled && state.server != null && state.port != null) {
+      await _setMacOSProxyValue(
+        service,
+        kind,
+        server: state.server!,
+        port: state.port!,
+      );
+      await _setMacOSProxyState(service, kind, enabled: true);
+    } else {
+      await _setMacOSProxyState(service, kind, enabled: false);
+    }
+  }
+
+  Future<void> _setMacOSProxyValue(
+    String service,
+    String kind, {
+    required String server,
+    required int port,
+  }) async {
+    final setCommand = switch (kind) {
+      'web' => '-setwebproxy',
+      'secureWeb' => '-setsecurewebproxy',
+      'socks' => '-setsocksfirewallproxy',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+    await _runNetworkSetup([setCommand, service, server, '$port']);
+  }
+
+  Future<void> _setMacOSProxyState(
+    String service,
+    String kind, {
+    required bool enabled,
+  }) async {
+    final stateCommand = switch (kind) {
+      'web' => '-setwebproxystate',
+      'secureWeb' => '-setsecurewebproxystate',
+      'socks' => '-setsocksfirewallproxystate',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+    await _runNetworkSetup([stateCommand, service, enabled ? 'on' : 'off']);
+  }
+
+  Future<void> _runNetworkSetup(List<String> args) async {
+    final result = await Process.run('networksetup', args);
+    if (result.exitCode != 0) {
+      throw CoreException('修改 macOS 系统代理失败: ${result.stderr}');
+    }
+  }
+
+  @override
+  Future<String?> _queryRegValue(String name) async {
+    final services = await _macOSNetworkServices();
+    if (services.isEmpty) {
+      return null;
+    }
+    final states = <String>[];
+    var anyEnabled = false;
+    for (final service in services) {
+      for (final kind in const ['web', 'secureWeb', 'socks']) {
+        final state = await _getMacOSProxyState(service, kind);
+        if (state.enabled) {
+          anyEnabled = true;
+          if (state.server != null && state.port != null) {
+            states.add('$service ${kind == 'secureWeb' ? 'https' : kind} '
+                '${state.server}:${state.port}');
+          }
+        }
+      }
+    }
+    if (name == 'ProxyEnable') {
+      return anyEnabled ? '1' : '0';
+    }
+    if (name == 'ProxyServer') {
+      return states.isEmpty ? null : states.join('; ');
+    }
+    return null;
+  }
+
+  @override
+  Future<void> _notifyProxyChanged() async {}
+}
+
+class _MacOSProxyState {
+  const _MacOSProxyState({
+    required this.enabled,
+    this.server,
+    this.port,
+  });
+
+  final bool enabled;
+  final String? server;
+  final int? port;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'enabled': enabled,
+      if (server != null) 'server': server,
+      if (port != null) 'port': port,
+    };
+  }
+
+  static _MacOSProxyState fromJson(Object? raw) {
+    if (raw is! Map) {
+      return const _MacOSProxyState(enabled: false);
+    }
+    return _MacOSProxyState(
+      enabled: raw['enabled'] == true,
+      server: raw['server'] == null ? null : '${raw['server']}',
+      port: raw['port'] is int
+          ? raw['port'] as int
+          : int.tryParse('${raw['port']}'),
+    );
+  }
 }
 
 class CoreException implements Exception {
