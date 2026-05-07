@@ -15,6 +15,7 @@ const int latencyFallbackQuickConcurrency = 8;
 const int latencyFallbackRetryConcurrency = 2;
 const Duration latencyAutoUntestedCooldown = Duration(seconds: 12);
 const Duration latencyAutoRetestCooldown = Duration(minutes: 3);
+const int runtimeSpeedSampleLimit = 60;
 
 class _LatencyMeasurement {
   const _LatencyMeasurement({
@@ -1385,6 +1386,10 @@ class AppController extends ChangeNotifier {
           uploadSpeed: byteRateText(sample.uploadBytesPerSecond),
           downloadSpeed: byteRateText(sample.downloadBytesPerSecond),
           sessionTraffic: byteSizeText(sample.sessionTotalBytes),
+          uploadSpeedSamples: appendRuntimeSpeedSample(
+              stats.uploadSpeedSamples, sample.uploadBytesPerSecond),
+          downloadSpeedSamples: appendRuntimeSpeedSample(
+              stats.downloadSpeedSamples, sample.downloadBytesPerSecond),
           duration: connectedAt == null
               ? stats.duration
               : DateTime.now().difference(connectedAt),
@@ -1420,6 +1425,17 @@ class AppController extends ChangeNotifier {
       logs.removeRange(200, logs.length);
     }
   }
+}
+
+List<int> appendRuntimeSpeedSample(List<int> samples, int value) {
+  final next = value < 0 ? 0 : value;
+  if (samples.length >= runtimeSpeedSampleLimit) {
+    return <int>[
+      ...samples.skip(samples.length - runtimeSpeedSampleLimit + 1),
+      next,
+    ];
+  }
+  return <int>[...samples, next];
 }
 
 String latencyFailureReason(Object error) {

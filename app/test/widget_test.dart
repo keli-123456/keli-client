@@ -39,6 +39,18 @@ void main() {
     }
   });
 
+  test('runtime speed samples keep a bounded recent history', () {
+    var samples = const <int>[];
+    for (var i = 0; i < runtimeSpeedSampleLimit + 5; i++) {
+      samples = appendRuntimeSpeedSample(samples, i);
+    }
+
+    expect(samples.length, runtimeSpeedSampleLimit);
+    expect(samples.first, 5);
+    expect(samples.last, runtimeSpeedSampleLimit + 4);
+    expect(appendRuntimeSpeedSample(samples, -12).last, 0);
+  });
+
   test('session store protects auth data when the platform supports it',
       () async {
     final temp = await Directory.systemTemp.createTemp('keli-client-test-');

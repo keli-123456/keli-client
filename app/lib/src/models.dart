@@ -454,24 +454,32 @@ class RuntimeStats {
     required this.downloadSpeed,
     required this.duration,
     this.sessionTraffic = '0 MB',
+    this.uploadSpeedSamples = const <int>[],
+    this.downloadSpeedSamples = const <int>[],
   });
 
   final String uploadSpeed;
   final String downloadSpeed;
   final Duration duration;
   final String sessionTraffic;
+  final List<int> uploadSpeedSamples;
+  final List<int> downloadSpeedSamples;
 
   RuntimeStats copyWith({
     String? uploadSpeed,
     String? downloadSpeed,
     Duration? duration,
     String? sessionTraffic,
+    List<int>? uploadSpeedSamples,
+    List<int>? downloadSpeedSamples,
   }) {
     return RuntimeStats(
       uploadSpeed: uploadSpeed ?? this.uploadSpeed,
       downloadSpeed: downloadSpeed ?? this.downloadSpeed,
       duration: duration ?? this.duration,
       sessionTraffic: sessionTraffic ?? this.sessionTraffic,
+      uploadSpeedSamples: uploadSpeedSamples ?? this.uploadSpeedSamples,
+      downloadSpeedSamples: downloadSpeedSamples ?? this.downloadSpeedSamples,
     );
   }
 }

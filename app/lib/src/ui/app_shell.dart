@@ -2427,11 +2427,13 @@ class _RuntimeStrip extends StatelessWidget {
       _RuntimeMetricData(
           label: '下载速度',
           value: controller.stats.downloadSpeed,
+          samples: controller.stats.downloadSpeedSamples,
           icon: Icons.south_rounded,
           color: keliGreen),
       _RuntimeMetricData(
           label: '上传速度',
           value: controller.stats.uploadSpeed,
+          samples: controller.stats.uploadSpeedSamples,
           icon: Icons.north_rounded,
           color: keliBlueStrong),
       _RuntimeMetricData(
@@ -2486,12 +2488,14 @@ class _RuntimeMetricData {
     required this.value,
     required this.icon,
     required this.color,
+    this.samples = const <int>[],
   });
 
   final String label;
   final String value;
   final IconData icon;
   final Color color;
+  final List<int> samples;
 }
 
 class _RuntimeMetricTile extends StatelessWidget {
@@ -2506,7 +2510,8 @@ class _RuntimeMetricTile extends StatelessWidget {
     final unit = parts.length > 1 ? parts.skip(1).join(' ') : '';
     return LayoutBuilder(
       builder: (context, constraints) {
-        final showSparkline = constraints.maxWidth >= 112;
+        final showSparkline =
+            constraints.maxWidth >= 112 && item.samples.length >= 2;
         return Container(
           margin: const EdgeInsets.all(4),
           padding: const EdgeInsets.all(12),
@@ -2573,7 +2578,8 @@ class _RuntimeMetricTile extends StatelessWidget {
                         width: 34,
                         height: 26,
                         child: CustomPaint(
-                            painter: _SparklinePainter(item.color))),
+                            painter:
+                                _SparklinePainter(item.color, item.samples))),
                 ],
               ),
             ],
@@ -2665,26 +2671,41 @@ class _CompactRuntimeMetricTile extends StatelessWidget {
 }
 
 class _SparklinePainter extends CustomPainter {
-  const _SparklinePainter(this.color);
+  const _SparklinePainter(this.color, this.samples);
 
   final Color color;
+  final List<int> samples;
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (samples.length < 2) {
+      return;
+    }
+
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
+
+    final maxValue = math.max(1, samples.reduce(math.max));
+    final topPadding = size.height * .12;
+    final bottomPadding = size.height * .16;
+    final drawableHeight =
+        math.max(1.0, size.height - topPadding - bottomPadding);
+    final step = samples.length == 1 ? 0.0 : size.width / (samples.length - 1);
     final points = <Offset>[
-      Offset(0, size.height * .70),
-      Offset(size.width * .18, size.height * .48),
-      Offset(size.width * .36, size.height * .58),
-      Offset(size.width * .56, size.height * .24),
-      Offset(size.width * .78, size.height * .42),
-      Offset(size.width, size.height * .18),
+      for (var index = 0; index < samples.length; index++)
+        Offset(
+          step * index,
+          size.height -
+              bottomPadding -
+              (samples[index].clamp(0, maxValue).toDouble() / maxValue) *
+                  drawableHeight,
+        ),
     ];
+
     final path = Path()..moveTo(points.first.dx, points.first.dy);
     for (final point in points.skip(1)) {
       path.lineTo(point.dx, point.dy);
@@ -2694,7 +2715,7 @@ class _SparklinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SparklinePainter oldDelegate) =>
-      oldDelegate.color != color;
+      oldDelegate.color != color || oldDelegate.samples != samples;
 }
 
 class NodesScreen extends StatefulWidget {
